@@ -1,0 +1,20 @@
+# Standalone distribution — all dependencies bundled (lerobot + neuracore included)
+# WARNING: Large install (~2-4GB with PyTorch). First run takes significant time.
+# Install via: uv pip install -r requirements-standalone.txt
+
+# Web framework and server
+fastapi>=0.100.0
+uvicorn[standard]>=0.20.0
+websockets>=10.0
+
+# Camera discovery and preview (headless = no GUI)
+opencv-python-headless>=4.5.0
+
+# Hugging Face Hub (datasets, repo creation)
+huggingface_hub>=0.20.0
+
+# Robot control framework (includes PyTorch)
+lerobot
+
+# Cloud training integration
+neuracore

@@ -46,6 +46,17 @@ export interface InferenceConfig {
   modelType: string; // "act" | "smolvla" | "diffusion" etc.
 }
 
+// Neuracore cloud training configuration (step 6)
+export interface NeuracoreConfig {
+  provider: "neuracore" | "qualia";
+  apiKey: string;
+  orgId: string;                    // selected organisation id
+  robotName: string;
+  importId: string | null;          // active background import job id
+  importedDatasetName: string;      // name of the dataset in Neuracore after import
+  jobId: string | null;             // most recently submitted training job id
+}
+
 // Supported inference model types
 export const INFERENCE_MODELS = [
   { value: "act", label: "ACT", supported: true },
@@ -63,7 +74,7 @@ export interface StartResponse {
 
 // Wizard state
 export interface WizardState {
-  currentStep: number; // 0-6
+  currentStep: number; // 0-7
   completedSteps: boolean[];
 
   // Step 0: Robot Type
@@ -92,7 +103,11 @@ export interface WizardState {
   recordingConfig: RecordingConfig;
   recordProcessId: string | null;
 
-  // Step 6: Inference
+  // Step 6: Train
+  trainStepVisited: boolean;
+  neuracoreConfig: NeuracoreConfig;
+
+  // Step 7: Inference
   inferenceStepVisited: boolean;
   inferenceConfig: InferenceConfig;
   inferenceProcessId: string | null;
@@ -141,8 +156,19 @@ export const STEPS = [
   { label: "Calibration", description: "Choose calibration for each arm" },
   { label: "Teleoperate", description: "Test robot teleoperation" },
   { label: "Record", description: "Record training data" },
+  { label: "Train", description: "Train a policy in the cloud" },
   { label: "Inference", description: "Run trained policy on robot" },
 ] as const;
+
+export const INITIAL_NEURACORE_CONFIG: NeuracoreConfig = {
+  provider: "neuracore",
+  apiKey: "",
+  orgId: "",
+  robotName: "",
+  importId: null,
+  importedDatasetName: "",
+  jobId: null,
+};
 
 // Initial state
 export const INITIAL_INFERENCE_CONFIG: InferenceConfig = {
@@ -169,7 +195,7 @@ export const INITIAL_RECORDING_CONFIG: RecordingConfig = {
 
 export const INITIAL_STATE: WizardState = {
   currentStep: 0,
-  completedSteps: [false, false, false, false, false, false, false],
+  completedSteps: [false, false, false, false, false, false, false, false],
   robotMode: null,
   detectedPorts: [],
   portAssignments: {},
@@ -184,6 +210,8 @@ export const INITIAL_STATE: WizardState = {
   recordStepVisited: false,
   recordingConfig: { ...INITIAL_RECORDING_CONFIG },
   recordProcessId: null,
+  trainStepVisited: false,
+  neuracoreConfig: { ...INITIAL_NEURACORE_CONFIG },
   inferenceStepVisited: false,
   inferenceConfig: { ...INITIAL_INFERENCE_CONFIG },
   inferenceProcessId: null,

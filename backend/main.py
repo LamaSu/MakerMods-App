@@ -17,10 +17,13 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS middleware for Next.js dev server
+# CORS middleware for Next.js dev server and standalone mode
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000", "http://127.0.0.1:3000",  # dev
+        "http://localhost:8000", "http://127.0.0.1:8000",  # standalone
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,6 +68,7 @@ from backend.api import (
     config,
     huggingface,
     inference,
+    neuracore_training,
     recording,
     setup,
     system,
@@ -79,11 +83,27 @@ app.include_router(inference.router, prefix="/api/inference", tags=["inference"]
 app.include_router(config.router, prefix="/api/config", tags=["config"])
 app.include_router(huggingface.router, prefix="/api/huggingface", tags=["huggingface"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
+app.include_router(neuracore_training.router, prefix="/api/neuracore", tags=["neuracore"])
 
 # WebSocket endpoint
 from backend.websockets.logs import router as websocket_router
 
 app.include_router(websocket_router)
+
+# Serve pre-built frontend (standalone mode — only active if frontend/out/ exists)
+_FRONTEND_OUT = repo_root / "frontend" / "out"
+
+if _FRONTEND_OUT.exists():
+    _next_dir = _FRONTEND_OUT / "_next"
+    if _next_dir.exists():
+        app.mount("/_next", StaticFiles(directory=str(_next_dir)), name="next_static")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        candidate = _FRONTEND_OUT / full_path
+        if candidate.is_file():
+            return FileResponse(str(candidate))
+        return FileResponse(str(_FRONTEND_OUT / "index.html"))
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8000):

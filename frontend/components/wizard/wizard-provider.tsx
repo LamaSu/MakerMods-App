@@ -15,11 +15,13 @@ import type {
   CameraSelection,
   RecordingConfig,
   InferenceConfig,
+  NeuracoreConfig,
 } from "@/lib/wizard-types";
 import {
   INITIAL_STATE,
   INITIAL_RECORDING_CONFIG,
   INITIAL_INFERENCE_CONFIG,
+  INITIAL_NEURACORE_CONFIG,
   SINGLE_PORT_ROLES,
   BIMANUAL_PORT_ROLES,
   validateBimanualCalibrationNames,
@@ -41,6 +43,7 @@ type Action =
   | { type: "SET_TELE_PROCESS_ID"; id: string | null }
   | { type: "SET_RECORDING_CONFIG"; config: Partial<RecordingConfig> }
   | { type: "SET_RECORD_PROCESS_ID"; id: string | null }
+  | { type: "SET_NEURACORE_CONFIG"; config: Partial<NeuracoreConfig> }
   | { type: "SET_INFERENCE_CONFIG"; config: Partial<InferenceConfig> }
   | { type: "SET_INFERENCE_PROCESS_ID"; id: string | null }
   | { type: "CLEAR_ALL_VALUES" }
@@ -48,7 +51,7 @@ type Action =
 
 // Step completion checker
 function computeCompletedSteps(state: WizardState): boolean[] {
-  const completed = [false, false, false, false, false, false, false];
+  const completed = [false, false, false, false, false, false, false, false];
 
   // Step 0: Robot Type
   completed[0] = state.robotMode !== null;
@@ -89,10 +92,11 @@ function computeCompletedSteps(state: WizardState): boolean[] {
     }
   }
 
-  // Steps 4-6: complete once the user has visited them
+  // Steps 4-7: complete once the user has visited them
   completed[4] = state.teleStepVisited;
   completed[5] = state.recordStepVisited;
-  completed[6] = state.inferenceStepVisited;
+  completed[6] = state.trainStepVisited;
+  completed[7] = state.inferenceStepVisited;
 
   return completed;
 }
@@ -125,6 +129,10 @@ function resetStepsFrom(state: WizardState, fromStep: number): WizardState {
     s.recordProcessId = null;
   }
   if (fromStep <= 6) {
+    s.trainStepVisited = false;
+    s.neuracoreConfig = { ...INITIAL_NEURACORE_CONFIG };
+  }
+  if (fromStep <= 7) {
     s.inferenceStepVisited = false;
     s.inferenceConfig = { ...INITIAL_INFERENCE_CONFIG };
     s.inferenceProcessId = null;
@@ -145,7 +153,8 @@ function reducer(state: WizardState, action: Action): WizardState {
         camerasStepVisited: state.camerasStepVisited || action.step === 2,
         teleStepVisited: state.teleStepVisited || action.step === 4,
         recordStepVisited: state.recordStepVisited || action.step === 5,
-        inferenceStepVisited: state.inferenceStepVisited || action.step === 6,
+        trainStepVisited: state.trainStepVisited || action.step === 6,
+        inferenceStepVisited: state.inferenceStepVisited || action.step === 7,
       };
       break;
 
@@ -259,6 +268,13 @@ function reducer(state: WizardState, action: Action): WizardState {
       next = { ...state, recordProcessId: action.id };
       break;
 
+    case "SET_NEURACORE_CONFIG":
+      next = {
+        ...state,
+        neuracoreConfig: { ...state.neuracoreConfig, ...action.config },
+      };
+      break;
+
     case "SET_INFERENCE_CONFIG":
       next = {
         ...state,
@@ -311,7 +327,7 @@ export function WizardProvider({ children }: { children: ReactNode }) {
     () =>
       dispatch({
         type: "GO_TO_STEP",
-        step: Math.min(state.currentStep + 1, 6),
+        step: Math.min(state.currentStep + 1, 7),
       }),
     [state.currentStep]
   );

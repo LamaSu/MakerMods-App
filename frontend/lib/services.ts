@@ -285,4 +285,134 @@ export const services = {
   }> => {
     return fetchAPI(`/api/inference/status/${processId}`);
   },
+
+  // ── Neuracore Cloud Training ──────────────────────────────────────────────
+
+  neuracoreLogin: async (email: string, password: string): Promise<{ authenticated: boolean; message: string }> => {
+    return fetchAPI("/api/neuracore/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+  },
+
+  neuracoreLoginWithKey: async (apiKey: string): Promise<{ authenticated: boolean; message: string }> => {
+    return fetchAPI("/api/neuracore/login-with-key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+  },
+
+  neuracoreStatus: async (): Promise<{ authenticated: boolean; message: string }> => {
+    return fetchAPI("/api/neuracore/status");
+  },
+
+  neuracoreConnectRobot: async (robotName: string): Promise<{ robot_id: string; robot_name: string }> => {
+    return fetchAPI("/api/neuracore/connect-robot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ robot_name: robotName }),
+    });
+  },
+
+  neuracoreListDatasets: async (): Promise<Array<{ id: string; name: string }>> => {
+    return fetchAPI("/api/neuracore/datasets");
+  },
+
+  neuracoreImportDataset: async (params: {
+    hfRepoId: string;
+    neuracoreDatasetName: string;
+    robotName: string;
+    jointNames: string[];
+    cameraNames: string[];
+    frequency: number;
+  }): Promise<{ import_id: string; message: string }> => {
+    return fetchAPI("/api/neuracore/import-dataset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        hf_repo_id: params.hfRepoId,
+        neuracore_dataset_name: params.neuracoreDatasetName,
+        robot_name: params.robotName,
+        joint_names: params.jointNames,
+        camera_names: params.cameraNames,
+        frequency: params.frequency,
+      }),
+    });
+  },
+
+  neuracoreImportStatus: async (importId: string): Promise<{
+    import_id: string;
+    status: string;
+    progress: number;
+    message: string;
+    error: string | null;
+  }> => {
+    return fetchAPI(`/api/neuracore/import-status/${importId}`);
+  },
+
+  neuracoreGetAlgorithms: async (): Promise<Array<{ id: string; name: string; description?: string }>> => {
+    return fetchAPI("/api/neuracore/algorithms");
+  },
+
+  neuracoreStartTraining: async (params: {
+    jobName: string;
+    datasetName: string;
+    algorithmName: string;
+    algorithmConfig: Record<string, unknown>;
+    gpuType: string;
+    numGpus: number;
+    frequency: number;
+    robotName: string;
+    inputJointNames: string[];
+    inputCameraNames: string[];
+    outputJointNames: string[];
+  }): Promise<{ id: string; name: string; status: string }> => {
+    return fetchAPI("/api/neuracore/training/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        job_name: params.jobName,
+        dataset_name: params.datasetName,
+        algorithm_name: params.algorithmName,
+        algorithm_config: params.algorithmConfig,
+        gpu_type: params.gpuType,
+        num_gpus: params.numGpus,
+        frequency: params.frequency,
+        robot_name: params.robotName,
+        input_joint_names: params.inputJointNames,
+        input_camera_names: params.inputCameraNames,
+        output_joint_names: params.outputJointNames,
+      }),
+    });
+  },
+
+  neuracoreGetJobs: async (): Promise<Array<{ id: string; name: string; status: string; created_at?: string }>> => {
+    return fetchAPI("/api/neuracore/training/jobs");
+  },
+
+  neuracoreGetJobLogs: async (jobId: string, maxEntries = 100): Promise<Record<string, unknown>> => {
+    return fetchAPI(`/api/neuracore/training/jobs/${jobId}/logs?max_entries=${maxEntries}`);
+  },
+
+  neuracoreDeleteJob: async (jobId: string): Promise<void> => {
+    await fetchAPI(`/api/neuracore/training/jobs/${jobId}`, { method: "DELETE" });
+  },
+
+  neuracoreListOrgs: async (): Promise<Array<{ id: string; name: string }>> => {
+    return fetchAPI("/api/neuracore/orgs");
+  },
+
+  neuracoreGetCurrentOrg: async (): Promise<{ org_id: string | null }> => {
+    return fetchAPI("/api/neuracore/orgs/current");
+  },
+
+  neuracoreSelectOrg: async (idOrName: string): Promise<{ message: string }> => {
+    return fetchAPI("/api/neuracore/orgs/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id_or_name: idOrName }),
+    });
+  },
 };

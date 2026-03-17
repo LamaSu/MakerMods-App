@@ -9,6 +9,7 @@ import { CamerasStep } from "./steps/cameras-step";
 import { CalibrationStep } from "./steps/calibration-step";
 import { TeleoperateStep } from "./steps/teleoperate-step";
 import { RecordStep } from "./steps/record-step";
+import { TrainStep } from "./steps/train-step";
 import { InferenceStep } from "./steps/inference-step";
 
 const STEP_COMPONENTS = [
@@ -18,6 +19,7 @@ const STEP_COMPONENTS = [
   CalibrationStep,
   TeleoperateStep,
   RecordStep,
+  TrainStep,
   InferenceStep,
 ];
 

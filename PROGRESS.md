@@ -1,5 +1,95 @@
 # xLeRobot Web UI - Implementation Progress
 
+---
+
+## 2026-03-18 — Neuracore Organisation Selection
+
+Fixed 500 error on `GET /api/neuracore/training/jobs` caused by `get_current_org()` blocking on interactive stdin when multiple orgs exist.
+
+### Root cause
+`_ensure_auth()` called `nc.login()` before every SDK call. SDK calls (e.g. `nc.get_training_jobs()`) internally invoke `get_current_org()`, which prompts interactively on stdin when no org is set in config — blocking FastAPI indefinitely.
+
+### Fix
+- `_ensure_auth()` now calls `nc.login()` only once per session (tracked via `_nc_logged_in` flag)
+- Added `list_orgs()`, `set_org()`, `get_current_org_id()` to `NeuracoreService` using `nc.list_my_orgs()` and `nc.set_organization()` (non-interactive)
+- New API endpoints: `GET /api/neuracore/orgs`, `GET /api/neuracore/orgs/current`, `POST /api/neuracore/orgs/select`
+- Frontend: new "Organisation" section (step 2) appears after login with a dropdown; auto-selects if only one org; changing org resets robot/downstream state
+- Sections renumbered: Auth → Org → Robot → Dataset Import → Training Config
+
+### Files Modified
+- `backend/services/neuracore_service.py`
+- `backend/models/neuracore_training.py`
+- `backend/api/neuracore_training.py`
+- `frontend/lib/wizard-types.ts`
+- `frontend/lib/services.ts`
+- `frontend/components/wizard/steps/train-step.tsx`
+
+---
+
+## 2026-03-17 — Standalone Distribution (ComfyUI-style)
+
+Added a zero-dependency distribution bundle so end-users can run the app without installing Python or Node.js.
+
+### Features
+- `install.sh` / `install.bat` — bootstraps a standalone Python 3.11 via `uv` (no system Python required) and installs all deps into a local `.venv`
+- `run.sh` / `run.bat` — activates `.venv` and starts `python -m backend.main` on port 8000
+- `build_frontend.sh` — developer-only script (requires Node.js) that produces `frontend/out/` via `NEXT_STATIC_EXPORT=1 npm run build`
+- FastAPI serves pre-built static frontend from `frontend/out/` when that directory exists (standalone mode); dev mode (Next.js on port 3000) is unaffected
+- `requirements-standalone.txt` — complete dependency list including `lerobot` and `neuracore` (~2-4GB install with PyTorch)
+
+### Files Created
+- `install.sh` — macOS/Linux installer using `uv`
+- `install.bat` — Windows installer using `uv`
+- `run.sh` — macOS/Linux launcher
+- `run.bat` — Windows launcher
+- `build_frontend.sh` — developer frontend build script
+- `requirements-standalone.txt` — standalone dependency list
+
+### Files Modified
+- `backend/main.py` — added port 8000 CORS origins; added conditional static file serving from `frontend/out/` after all API routers (catch-all route only active when `frontend/out/` exists)
+- `frontend/next.config.ts` — conditional config: `output: "export"` when `NEXT_STATIC_EXPORT=1`, dev rewrites otherwise
+
+### Notes
+- WebSocket URL in `use-websocket.ts` already hardcodes `ws://localhost:8000` — correct for standalone, no change needed
+- `frontend/out/` must be built by developer (`./build_frontend.sh`) and included in the distribution zip
+- API routes registered before the catch-all take priority, so `/api/*` and `/ws/*` are unaffected in standalone mode
+
+---
+
+## 2026-03-17 — Neuracore Cloud Training Step
+
+Added a new **Train** step (step 6) between Record and Inference, integrating Neuracore's cloud training platform.
+
+### Features
+- Provider selector UI: Neuracore (fully implemented) + Qualia (Coming Soon placeholder)
+- Authentication via email/password (generates API key) or direct API key entry
+- Robot registration: `neuracore.connect_robot(robot_name)` with wizard-derived default name
+- HuggingFace → Neuracore dataset import using `LeRobotDatasetImporter` (background thread with progress polling)
+  - SO101 default joint names hardcoded, user-overridable via textarea
+  - Camera names auto-derived from wizard camera selections
+  - Configurable FPS/frequency
+- Training job configuration: algorithm selector, batch size, epochs, prediction horizon, GPU type/count
+- Training job list with status badges, log viewer (expandable), and delete
+- Auto-refresh jobs every 10 s when a job is actively running
+
+### Files Modified
+- `backend/models/neuracore_training.py` — **new**: Pydantic models for all Neuracore API types
+- `backend/services/neuracore_service.py` — **new**: NeuracoreService singleton (auth, robot, import, training)
+- `backend/api/neuracore_training.py` — **new**: FastAPI router at `/api/neuracore/*`
+- `backend/main.py` — registered `neuracore_training` router
+- `frontend/lib/wizard-types.ts` — added `NeuracoreConfig`, `INITIAL_NEURACORE_CONFIG`, Train step in `STEPS`, 8-step `WizardState`
+- `frontend/lib/services.ts` — added all `neuracore*` API client functions
+- `frontend/components/wizard/wizard-provider.tsx` — added `trainStepVisited`, `neuracoreConfig` state + reducer cases
+- `frontend/components/wizard/wizard-layout.tsx` — inserted `TrainStep` at index 6
+- `frontend/components/wizard/steps/train-step.tsx` — **new**: full Train step UI component
+
+### Notes
+- `neuracore` must be `pip install neuracore` in the backend environment
+- Dataset import runs in a background daemon thread; frontend polls `/api/neuracore/import-status/{id}`
+- Inference step is now step 7 (shifted from step 6)
+
+---
+
 ## Architecture
 - **Frontend**: Next.js 16 (App Router) + shadcn/ui + Tailwind CSS v4
 - **Backend**: FastAPI (Python) + WebSocket for real-time logs
