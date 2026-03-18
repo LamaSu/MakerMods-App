@@ -47,6 +47,8 @@ class ImportDatasetRequest(BaseModel):
     joint_names: list[str]  # positional mapping for observation.state / action
     camera_names: list[str]  # observation.images.{name} keys
     frequency: int = 30  # dataset FPS
+    dataset_source: str = "huggingface"  # "huggingface" | "local"
+    local_dataset_path: Optional[str] = None  # used when dataset_source == "local"
 
 
 class ImportStatusResponse(BaseModel):

@@ -133,6 +133,8 @@ export function TrainStep() {
   const [editError, setEditError] = useState<string | null>(null);
 
   // Import state
+  const [datasetSource, setDatasetSource] = useState<"huggingface" | "local">("huggingface");
+  const [localDatasetPath, setLocalDatasetPath] = useState("");
   const [hfRepoId, setHfRepoId] = useState(
     nc.importedDatasetName ? "" : (state.recordingConfig.repoId || "")
   );
@@ -396,12 +398,14 @@ export function TrainStep() {
       .filter(Boolean);
     try {
       const res = await services.neuracoreImportDataset({
-        hfRepoId,
+        hfRepoId: datasetSource === "huggingface" ? hfRepoId : localDatasetPath,
         neuracoreDatasetName,
         robotName,
         jointNames,
         cameraNames: configuredCameraNames,
         frequency: importFrequency,
+        datasetSource,
+        localDatasetPath: datasetSource === "local" ? localDatasetPath : undefined,
       });
       setImportId(res.import_id);
       persistConfig({ importId: res.import_id });
@@ -858,15 +862,53 @@ export function TrainStep() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>HuggingFace Repo ID</Label>
-                  <Input
-                    value={hfRepoId}
-                    onChange={(e) => setHfRepoId(e.target.value)}
-                    placeholder="username/my-dataset"
-                  />
+              {/* Dataset source toggle */}
+              <div className="space-y-1">
+                <Label>Source</Label>
+                <div className="flex gap-2">
+                  <Button
+                    variant={datasetSource === "huggingface" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setDatasetSource("huggingface")}
+                  >
+                    HuggingFace
+                  </Button>
+                  <Button
+                    variant={datasetSource === "local" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setDatasetSource("local")}
+                  >
+                    Local Path
+                  </Button>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {datasetSource === "huggingface" ? (
+                  <div className="space-y-1">
+                    <Label>HuggingFace Repo ID</Label>
+                    <Input
+                      value={hfRepoId}
+                      onChange={(e) => setHfRepoId(e.target.value)}
+                      placeholder="username/my-dataset"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Will download from Hub if not cached locally
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <Label>Local Dataset Path</Label>
+                    <Input
+                      value={localDatasetPath}
+                      onChange={(e) => setLocalDatasetPath(e.target.value)}
+                      placeholder="/path/to/dataset"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Path to a local LeRobot dataset directory
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-1">
                   <Label>Neuracore Dataset Name</Label>
                   <Input
@@ -964,7 +1006,7 @@ export function TrainStep() {
               {!importDone && (
                 <Button
                   onClick={handleImport}
-                  disabled={importRunning || !hfRepoId || !neuracoreDatasetName}
+                  disabled={importRunning || !neuracoreDatasetName || (datasetSource === "huggingface" ? !hfRepoId : !localDatasetPath)}
                   className="w-full"
                 >
                   {importRunning ? (

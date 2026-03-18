@@ -304,39 +304,82 @@ class NeuracoreService:
             task.message = "Building import configuration…"
             task.progress = 0.2
 
-            yaml_config = self._build_yaml_config(request)
+            if request.dataset_source == "local" and request.local_dataset_path:
+                dataset_dir = Path(request.local_dataset_path)
+                input_dataset_name = dataset_dir.name
+                if not dataset_dir.exists():
+                    raise ValueError(f"Local dataset path not found: {dataset_dir}")
+            else:
+                # HuggingFace — use cache, or download if missing
+                dataset_dir = (
+                    Path.home() / ".cache" / "huggingface" / "lerobot" / request.hf_repo_id
+                )
+                input_dataset_name = request.hf_repo_id
+                if not dataset_dir.exists():
+                    task.message = f"Downloading {request.hf_repo_id} from HuggingFace Hub…"
+                    task.progress = 0.22
+                    from huggingface_hub import snapshot_download
+                    snapshot_download(
+                        repo_id=request.hf_repo_id,
+                        repo_type="dataset",
+                        local_dir=str(dataset_dir),
+                    )
+
+            yaml_config = self._build_yaml_config(request, input_dataset_name=input_dataset_name)
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".yaml", delete=False
             ) as fh:
                 yaml.dump(yaml_config, fh, default_flow_style=False)
                 config_path = Path(fh.name)
 
-            dataset_dir = (
-                Path.home() / ".cache" / "huggingface" / "lerobot" / request.hf_repo_id
-            )
-            if not dataset_dir.exists():
-                raise ValueError(
-                    f"HF dataset cache not found at {dataset_dir}. "
-                    "Please record and push the dataset first."
-                )
-
             task.message = f"Loading metadata from {dataset_dir}…"
             task.progress = 0.25
 
             dataconfig = DatasetImportConfig.from_file(config_path)
 
-            task.message = "Uploading episodes to Neuracore cloud…"
+            task.message = "Preparing importer…"
             task.progress = 0.3
 
             importer = LeRobotDatasetImporter(
-                input_dataset_name=request.hf_repo_id,
+                input_dataset_name=input_dataset_name,
                 output_dataset_name=request.neuracore_dataset_name,
                 dataset_dir=dataset_dir,
                 dataset_config=dataconfig,
             )
-            importer.import_all()
 
-            worker_err_count = len(importer.worker_errors) if hasattr(importer, "worker_errors") else 0
+            # Use the low-level API (build_work_items → prepare_worker → import_item)
+            # instead of import_all() so we can report per-episode progress.
+            work_items = importer.build_work_items()
+            num_episodes = max(len(work_items), 1)
+            # Mirror what _worker_entry does before calling prepare_worker:
+            # set _worker_id so nc.start_recording(instance=...) uses instance 0.
+            importer._worker_id = 0
+            importer.prepare_worker(0, work_items)
+
+            episode_errors = 0
+            for i, item in enumerate(work_items):
+                task.progress = 0.3 + 0.65 * (i / num_episodes)
+                task.message = f"Uploading episode {i + 1}/{num_episodes}…"
+                try:
+                    importer.import_item(item)
+                except Exception as ep_exc:
+                    logger.warning("Episode %d import failed: %s", i, ep_exc)
+                    episode_errors += 1
+
+            # Drain any errors queued via the internal _error_queue
+            try:
+                q = getattr(importer, "_error_queue", None)
+                if q is not None:
+                    while True:
+                        try:
+                            q.get_nowait()
+                            episode_errors += 1
+                        except Exception:
+                            break
+            except Exception:
+                pass
+
+            worker_err_count = episode_errors
             task.status = "completed"
             task.progress = 1.0
             task.message = (
@@ -355,8 +398,9 @@ class NeuracoreService:
                 config_path.unlink(missing_ok=True)
 
     @staticmethod
-    def _build_yaml_config(request: ImportDatasetRequest) -> dict:
+    def _build_yaml_config(request: ImportDatasetRequest, input_dataset_name: str | None = None) -> dict:
         """Construct the DatasetImportConfig YAML dict for an SO101 LeRobot dataset."""
+        name = input_dataset_name or request.hf_repo_id
         joint_mapping = [{"name": n} for n in request.joint_names]
 
         data_import: dict = {
@@ -386,7 +430,7 @@ class NeuracoreService:
             }
 
         return {
-            "input_dataset_name": request.hf_repo_id,
+            "input_dataset_name": name,
             "dataset_type": "LEROBOT",
             "output_dataset": {"name": request.neuracore_dataset_name},
             "robot": {"name": request.robot_name},

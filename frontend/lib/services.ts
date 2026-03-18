@@ -339,6 +339,8 @@ export const services = {
     jointNames: string[];
     cameraNames: string[];
     frequency: number;
+    datasetSource: "huggingface" | "local";
+    localDatasetPath?: string;
   }): Promise<{ import_id: string; message: string }> => {
     return fetchAPI("/api/neuracore/import-dataset", {
       method: "POST",
@@ -350,6 +352,8 @@ export const services = {
         joint_names: params.jointNames,
         camera_names: params.cameraNames,
         frequency: params.frequency,
+        dataset_source: params.datasetSource,
+        local_dataset_path: params.localDatasetPath ?? null,
       }),
     });
   },

@@ -2,6 +2,39 @@
 
 ---
 
+## 2026-03-18 — Per-Episode Progress Bar for Neuracore Dataset Import
+
+Replaced `importer.import_all()` with a manual episode loop using `build_work_items()` + `prepare_worker()` + `import_item()`. This allows the backend to update `task.progress` and `task.message` after each episode, so the frontend progress bar advances continuously instead of staying stuck at 30% for the entire upload.
+
+Progress range: 0.30 (start of upload) → 0.95 (last episode), then 1.0 on completion.
+Message example: `"Uploading episode 5/42…"`
+
+### Files Modified
+- `backend/services/neuracore_service.py`
+
+---
+
+## 2026-03-18 — Flexible Dataset Source for Neuracore Import (Local path + HuggingFace auto-download)
+
+Added two dataset source options to the Neuracore import flow:
+- **Local path**: import from any directory on disk containing a LeRobot dataset
+- **HuggingFace**: use local cache if present, otherwise `snapshot_download` from the Hub automatically
+
+### Changes
+- **Backend**: Added `dataset_source` (`"huggingface"` | `"local"`) and `local_dataset_path` fields to `ImportDatasetRequest`
+- **Backend**: `_run_import` now resolves `dataset_dir` based on source — for local, validates the path exists; for HF, downloads via `snapshot_download` if cache is missing
+- **Backend**: `_build_yaml_config` accepts an optional `input_dataset_name` override (used to set the correct name for local datasets)
+- **Frontend**: `neuracoreImportDataset` service function extended with `datasetSource` and `localDatasetPath` params
+- **Frontend**: Dataset Import section now shows a HuggingFace / Local Path toggle; conditionally renders the appropriate input with helper text; Import button disabled when the relevant field is empty
+
+### Files Modified
+- `backend/models/neuracore_training.py`
+- `backend/services/neuracore_service.py`
+- `frontend/lib/services.ts`
+- `frontend/components/wizard/steps/train-step.tsx`
+
+---
+
 ## 2026-03-18 — Robot Management in Neuracore Training Step
 
 Added full robot management to the train step: select existing robot, create new robot, and edit/rename an existing robot inline.
