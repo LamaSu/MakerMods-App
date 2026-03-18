@@ -433,11 +433,26 @@ export function TrainStep() {
     setExpandedJobId(jobId);
     try {
       const res = await services.neuracoreGetJobLogs(jobId, 200);
-      const entries = (res as { entries?: Array<{ message?: string; text_payload?: string }> }).entries ?? [];
-      const text = entries
-        .map((e) => e.message ?? e.text_payload ?? JSON.stringify(e))
-        .join("\n");
-      setJobLogs((prev) => ({ ...prev, [jobId]: text }));
+      const obj = res as Record<string, unknown>;
+      // API returns { logs: [{timestamp, severity, message}, ...], ... } — logs are newest-first
+      const rawEntries = (obj.logs ?? obj.entries ?? obj.results ?? res) as unknown[];
+      const entries = Array.isArray(rawEntries) ? [...rawEntries].reverse() : [];
+      let text = "";
+      if (entries.length > 0) {
+        text = entries.map((e) => {
+          if (typeof e === "string") return e;
+          const entry = e as Record<string, unknown>;
+          const ts = typeof entry.timestamp === "number"
+            ? new Date(entry.timestamp * 1000).toISOString().replace("T", " ").slice(0, 19)
+            : "";
+          const sev = typeof entry.severity === "string" ? entry.severity : "";
+          const msg = String(entry.message ?? entry.text_payload ?? entry.text ?? entry.log ?? JSON.stringify(e));
+          return ts ? `[${ts}] ${sev}: ${msg}` : `${sev}: ${msg}`.trimStart();
+        }).join("\n");
+      } else {
+        text = JSON.stringify(res, null, 2);
+      }
+      setJobLogs((prev) => ({ ...prev, [jobId]: text || "(no logs available)" }));
     } catch {
       setJobLogs((prev) => ({ ...prev, [jobId]: "Could not load logs." }));
     }

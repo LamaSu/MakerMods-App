@@ -2,6 +2,51 @@
 
 ---
 
+## 2026-03-18 — Fix Training Job Log Parsing
+
+Confirmed actual API response shape via curl: `{ job_id, logs: [{timestamp, severity, message}], total_entries, retrieved_at }`. Logs come newest-first from the API.
+
+Updated `handleExpandJob` in `train-step.tsx` to:
+- Explicitly read `obj.logs` (with `obj.entries`/`obj.results` as fallbacks)
+- Reverse entries to show oldest-first (chronological order)
+- Format each entry as `[YYYY-MM-DD HH:MM:SS] SEVERITY: message`
+- Fall back to raw JSON only if none of the known array keys are present
+
+### Files Modified
+- `frontend/components/wizard/steps/train-step.tsx`
+
+---
+
+## 2026-03-18 — Fix Tombstoned Dataset Name Fallback (list-by-ID)
+
+Added a third-level fallback in `_run_import` for dataset names that are "tombstoned" on Neuracore — where both `create_dataset()` and `get_dataset(name=...)` fail (name rejected for creation, name-based lookup returns nothing).
+
+### Fix
+When `get_dataset(name=...)` also fails, the code now calls `self.list_datasets()` (direct REST call to `GET /org/{org_id}/datasets`) and scans for a name match. If found, activates via `nc.get_dataset(id=match["id"])` which uses a different endpoint (`/org/{org_id}/datasets/{id}`) that bypasses the broken name-lookup. If no match is found in the list, raises a clear error suggesting the user try a different dataset name.
+
+### Files Modified
+- `backend/services/neuracore_service.py`
+
+---
+
+## 2026-03-18 — Fix Three Neuracore Import/Training Issues
+
+Fixed three bugs discovered during dataset import and training job monitoring.
+
+### Issues fixed
+
+**1. Dataset name collision** — `nc.create_dataset()` crashed when a dataset of the same name existed globally on Neuracore (even if not in the queried org), because `Dataset.get_by_name(..., non_exist_ok=True)` returned `None` for globally-taken names not visible in the current org. Fixed by wrapping `create_dataset` in a try/except that falls back to `nc.get_dataset()` on failure.
+
+**2. Worker error count in import message** — After `importer.import_all()` returns, the completion message now includes a warning count if `importer.worker_errors` is non-empty (e.g. 404 on `traces/active` from the last episode). The data is already uploaded in this case; the message clarifies it's a server-side cleanup warning.
+
+**3. Training job logs blank** — Frontend assumed `{ entries: [...] }` shape but actual Neuracore API response may differ. Now handles: direct array, `entries`/`logs`/`results` key, or falls back to raw `JSON.stringify` so the user can see the actual structure.
+
+### Files Modified
+- `backend/services/neuracore_service.py`
+- `frontend/components/wizard/steps/train-step.tsx`
+
+---
+
 ## 2026-03-18 — Neuracore Organisation Selection
 
 Fixed 500 error on `GET /api/neuracore/training/jobs` caused by `get_current_org()` blocking on interactive stdin when multiple orgs exist.

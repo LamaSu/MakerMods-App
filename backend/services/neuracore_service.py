@@ -236,7 +236,40 @@ class NeuracoreService:
             task.progress = 0.1
             existing = Dataset.get_by_name(request.neuracore_dataset_name, non_exist_ok=True)
             if existing is None:
-                nc.create_dataset(name=request.neuracore_dataset_name)
+                try:
+                    nc.create_dataset(name=request.neuracore_dataset_name)
+                except Exception as create_exc:
+                    # Name may already exist globally (in another org); try retrieving it
+                    logger.warning(
+                        "create_dataset failed (%s); trying to use existing dataset",
+                        create_exc,
+                    )
+                    try:
+                        nc.get_dataset(name=request.neuracore_dataset_name)
+                    except Exception as get_exc:
+                        # Name lookup also failed — last resort: list all datasets and match by
+                        # name, then activate by ID (different API endpoint, bypasses name-lookup bug)
+                        logger.warning(
+                            "get_dataset(name=...) failed (%s); scanning dataset list for name match",
+                            get_exc,
+                        )
+                        datasets = self.list_datasets()
+                        match = next(
+                            (d for d in datasets if d.get("name") == request.neuracore_dataset_name),
+                            None,
+                        )
+                        if match is None:
+                            raise ValueError(
+                                f"Dataset '{request.neuracore_dataset_name}' could not be created or found. "
+                                "The name may be reserved or tombstoned on Neuracore. "
+                                "Try a different dataset name."
+                            ) from get_exc
+                        logger.info(
+                            "Found dataset '%s' by list scan (id=%s); activating by ID",
+                            request.neuracore_dataset_name,
+                            match["id"],
+                        )
+                        nc.get_dataset(id=match["id"])
             else:
                 logger.info(
                     "Dataset '%s' already exists; new episodes will be appended.",
@@ -284,9 +317,14 @@ class NeuracoreService:
             )
             importer.import_all()
 
+            worker_err_count = len(importer.worker_errors) if hasattr(importer, "worker_errors") else 0
             task.status = "completed"
             task.progress = 1.0
-            task.message = "Import completed successfully!"
+            task.message = (
+                f"Import completed with {worker_err_count} warning(s) (server-side cleanup errors are normal)."
+                if worker_err_count
+                else "Import completed successfully!"
+            )
 
         except Exception as exc:
             logger.exception("Neuracore import failed")
