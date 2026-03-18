@@ -12,8 +12,10 @@ from backend.models.neuracore_training import (
     NeuracoreLoginRequest,
     NeuracoreLoginStatus,
     OrgInfo,
+    RobotInfo,
     SelectOrgRequest,
     StartTrainingRequest,
+    UpdateRobotRequest,
 )
 from backend.services.neuracore_service import neuracore_service
 
@@ -102,6 +104,25 @@ async def connect_robot(body: ConnectRobotRequest):
         return ConnectRobotResponse(**result)
     except Exception as exc:
         raise _http_error(500, f"Failed to connect robot: {exc}") from exc
+
+
+@router.get("/robots", response_model=list[RobotInfo])
+async def list_robots():
+    """List all robots in the current organisation."""
+    try:
+        return neuracore_service.list_robots()
+    except Exception as exc:
+        raise _http_error(500, f"Failed to list robots: {exc}") from exc
+
+
+@router.put("/robots/{robot_id}", response_model=ConnectRobotResponse)
+async def update_robot(robot_id: str, body: UpdateRobotRequest):
+    """Rename a robot by its current name or ID."""
+    try:
+        result = neuracore_service.update_robot(body.robot_key, body.new_name)
+        return ConnectRobotResponse(**result)
+    except Exception as exc:
+        raise _http_error(500, f"Failed to update robot: {exc}") from exc
 
 
 # ─── Datasets ─────────────────────────────────────────────────────────────────

@@ -2,6 +2,26 @@
 
 ---
 
+## 2026-03-18 — Robot Management in Neuracore Training Step
+
+Added full robot management to the train step: select existing robot, create new robot, and edit/rename an existing robot inline.
+
+### Changes
+- **Backend**: Added `list_robots()` and `update_robot()` to `NeuracoreService`, wrapping `list_organization_robots()` and `nc.update_robot_name()` from the Neuracore SDK
+- **Backend**: Added `RobotInfo` and `UpdateRobotRequest` Pydantic models
+- **Backend**: Added `GET /api/neuracore/robots` and `PUT /api/neuracore/robots/{robot_id}` endpoints
+- **Frontend**: Added `neuracoreListRobots` and `neuracoreUpdateRobot` service functions
+- **Frontend**: Replaced simple robot name input with a dropdown selector (existing robots + "Create new"), inline create form, and Edit Name flow with save/cancel
+
+### Files Modified
+- `backend/services/neuracore_service.py`
+- `backend/models/neuracore_training.py`
+- `backend/api/neuracore_training.py`
+- `frontend/lib/services.ts`
+- `frontend/components/wizard/steps/train-step.tsx`
+
+---
+
 ## 2026-03-18 — Fix Training Job Log Parsing
 
 Confirmed actual API response shape via curl: `{ job_id, logs: [{timestamp, severity, message}], total_entries, retrieved_at }`. Logs come newest-first from the API.

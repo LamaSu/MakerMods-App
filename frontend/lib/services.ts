@@ -316,6 +316,18 @@ export const services = {
     });
   },
 
+  neuracoreListRobots: async (): Promise<Array<{ id: string; name: string }>> => {
+    return fetchAPI("/api/neuracore/robots");
+  },
+
+  neuracoreUpdateRobot: async (robotKey: string, newName: string): Promise<{ robot_id: string; robot_name: string }> => {
+    return fetchAPI(`/api/neuracore/robots/${encodeURIComponent(robotKey)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ robot_key: robotKey, new_name: newName }),
+    });
+  },
+
   neuracoreListDatasets: async (): Promise<Array<{ id: string; name: string }>> => {
     return fetchAPI("/api/neuracore/datasets");
   },

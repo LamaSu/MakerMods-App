@@ -123,6 +123,15 @@ export function TrainStep() {
   const [robotId, setRobotId] = useState<string | null>(null);
   const [robotError, setRobotError] = useState<string | null>(null);
 
+  // Robot management
+  const [robots, setRobots] = useState<Array<{ id: string; name: string }>>([]);
+  const [robotsLoading, setRobotsLoading] = useState(false);
+  const [selectedRobotId, setSelectedRobotId] = useState<string>("new");
+  const [editingRobotId, setEditingRobotId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
   // Import state
   const [hfRepoId, setHfRepoId] = useState(
     nc.importedDatasetName ? "" : (state.recordingConfig.repoId || "")
@@ -187,6 +196,7 @@ export function TrainStep() {
         if (nc.orgId) setSelectedOrgId(nc.orgId);
         fetchJobs();
         fetchAlgorithms();
+        loadRobots();
       }
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -264,6 +274,18 @@ export function TrainStep() {
     }
   };
 
+  const loadRobots = async () => {
+    setRobotsLoading(true);
+    try {
+      const list = await services.neuracoreListRobots();
+      setRobots(list);
+    } catch {
+      // non-fatal; org may not be set yet
+    } finally {
+      setRobotsLoading(false);
+    }
+  };
+
   const handleSelectOrg = async (orgId: string, orgList?: Array<{ id: string; name: string }>) => {
     setOrgLoading(true);
     setOrgError(null);
@@ -273,8 +295,11 @@ export function TrainStep() {
       persistConfig({ orgId });
       // Reset downstream state when org changes
       setRobotId(null);
+      setSelectedRobotId("new");
+      setEditingRobotId(null);
       fetchJobs();
       fetchAlgorithms();
+      loadRobots();
     } catch (e: unknown) {
       setOrgError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -333,10 +358,32 @@ export function TrainStep() {
       const res = await services.neuracoreConnectRobot(robotName);
       setRobotId(res.robot_id);
       persistConfig({ robotName });
+      // Refresh robot list and auto-select the newly created/connected robot
+      const list = await services.neuracoreListRobots();
+      setRobots(list);
+      setSelectedRobotId(res.robot_id);
     } catch (e: unknown) {
       setRobotError(e instanceof Error ? e.message : String(e));
     } finally {
       setRobotConnecting(false);
+    }
+  };
+
+  const handleSaveRobotName = async () => {
+    if (!editingRobotId || !editName.trim()) return;
+    setEditLoading(true);
+    setEditError(null);
+    try {
+      const res = await services.neuracoreUpdateRobot(editingRobotId, editName.trim());
+      setRobotName(res.robot_name);
+      persistConfig({ robotName: res.robot_name });
+      const list = await services.neuracoreListRobots();
+      setRobots(list);
+      setEditingRobotId(null);
+    } catch (e: unknown) {
+      setEditError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEditLoading(false);
     }
   };
 
@@ -665,34 +712,131 @@ export function TrainStep() {
                   </Badge>
                 )}
               </div>
-              <div className="flex gap-2">
-                <div className="flex-1 space-y-1">
-                  <Label>Robot Name</Label>
-                  <Input
-                    value={robotName}
-                    onChange={(e) => setRobotName(e.target.value)}
-                    placeholder="my_so101_robot"
-                  />
-                </div>
-                <div className="flex items-end">
-                  <Button
-                    onClick={handleConnectRobot}
-                    disabled={robotConnecting || !robotName}
-                    variant={robotId ? "outline" : "default"}
+
+              {/* Robot selector */}
+              <div className="space-y-1">
+                <Label>Select Robot</Label>
+                <div className="flex gap-2">
+                  <Select
+                    value={selectedRobotId}
+                    onValueChange={(v) => {
+                      setSelectedRobotId(v);
+                      setEditingRobotId(null);
+                      setEditError(null);
+                      if (v !== "new") {
+                        const robot = robots.find((r) => r.id === v);
+                        if (robot) {
+                          setRobotName(robot.name);
+                          setRobotId(robot.id);
+                          persistConfig({ robotName: robot.name });
+                        }
+                      } else {
+                        setRobotId(null);
+                      }
+                    }}
+                    disabled={robotsLoading}
                   >
-                    {robotConnecting ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : robotId ? (
-                      "Reconnect"
-                    ) : (
-                      "Connect"
-                    )}
+                    <SelectTrigger className="flex-1">
+                      <SelectValue placeholder="Choose a robot or create new…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {robots.map((r) => (
+                        <SelectItem key={r.id} value={r.id}>
+                          {r.name}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="new">── Create new robot ──</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={loadRobots}
+                    disabled={robotsLoading}
+                    title="Refresh robot list"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${robotsLoading ? "animate-spin" : ""}`} />
                   </Button>
                 </div>
               </div>
-              {robotId && (
-                <p className="text-xs text-muted-foreground">Robot ID: {robotId}</p>
+
+              {/* Create new robot */}
+              {selectedRobotId === "new" && (
+                <div className="flex gap-2">
+                  <div className="flex-1 space-y-1">
+                    <Label>Robot Name</Label>
+                    <Input
+                      value={robotName}
+                      onChange={(e) => setRobotName(e.target.value)}
+                      placeholder="my_so101_robot"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      onClick={handleConnectRobot}
+                      disabled={robotConnecting || !robotName}
+                    >
+                      {robotConnecting ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        "Create"
+                      )}
+                    </Button>
+                  </div>
+                </div>
               )}
+
+              {/* Existing robot — show ID + edit */}
+              {selectedRobotId !== "new" && robotId && editingRobotId !== robotId && (
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">ID: {robotId}</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setEditingRobotId(robotId);
+                      setEditName(robotName);
+                      setEditError(null);
+                    }}
+                  >
+                    Edit Name
+                  </Button>
+                </div>
+              )}
+
+              {/* Edit robot name */}
+              {editingRobotId && (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <Input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      placeholder="New robot name"
+                      className="flex-1"
+                    />
+                    <Button
+                      onClick={handleSaveRobotName}
+                      disabled={editLoading || !editName.trim()}
+                    >
+                      {editLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => { setEditingRobotId(null); setEditError(null); }}
+                      disabled={editLoading}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                  {editError && (
+                    <Alert variant="destructive">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription>{editError}</AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              )}
+
               {robotError && (
                 <Alert variant="destructive">
                   <AlertTriangle className="h-4 w-4" />

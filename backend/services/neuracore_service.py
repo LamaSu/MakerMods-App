@@ -158,6 +158,25 @@ class NeuracoreService:
         robot = nc.connect_robot(robot_name)
         return {"robot_id": robot.id, "robot_name": robot.name}
 
+    def list_robots(self) -> list[dict]:
+        """List all robots in the current organisation."""
+        self._ensure_auth()
+        from neuracore.core.robot import list_organization_robots
+
+        org_id = self.get_current_org_id()
+        if not org_id:
+            raise ValueError("No organisation selected. Please select an org first.")
+        robots = list_organization_robots(org_id, is_shared=False, mode="current")
+        return [{"id": r["id"], "name": r["name"]} for r in robots]
+
+    def update_robot(self, robot_key: str, new_name: str) -> dict:
+        """Rename a robot by its current name or ID."""
+        self._ensure_auth()
+        import neuracore as nc
+
+        robot_id = nc.update_robot_name(robot_key, new_name)
+        return {"robot_id": robot_id, "robot_name": new_name}
+
     # ─────────────────────────── Datasets ─────────────────────────────────
 
     def list_datasets(self) -> list[dict]:

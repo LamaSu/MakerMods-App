@@ -103,3 +103,17 @@ class SelectOrgRequest(BaseModel):
     """Request to set the active Neuracore organisation."""
 
     id_or_name: str
+
+
+class RobotInfo(BaseModel):
+    """A robot registered in Neuracore."""
+
+    id: str
+    name: str
+
+
+class UpdateRobotRequest(BaseModel):
+    """Request to rename a robot."""
+
+    robot_key: str  # current name or ID
+    new_name: str
