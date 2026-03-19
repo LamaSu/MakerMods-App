@@ -58,12 +58,37 @@ else
   echo "Virtual environment created at .venv"
 fi
 
+# Install ffmpeg if not already present
+if command -v ffmpeg &>/dev/null; then
+  echo "ffmpeg already installed, skipping."
+else
+  echo "Installing ffmpeg..."
+  if [ "$OS" = "Darwin" ]; then
+    if command -v brew &>/dev/null; then
+      brew install ffmpeg
+    else
+      echo "WARNING: Homebrew not found. Install ffmpeg manually: https://ffmpeg.org/download.html"
+    fi
+  else  # Linux
+    if command -v apt-get &>/dev/null; then
+      sudo apt-get install -y ffmpeg
+    elif command -v dnf &>/dev/null; then
+      sudo dnf install -y ffmpeg
+    else
+      echo "WARNING: Could not detect package manager. Install ffmpeg manually: https://ffmpeg.org/download.html"
+    fi
+  fi
+fi
+
 # Install dependencies into the venv
 # WARNING: Large install (~2-4GB with PyTorch). First run takes time.
 echo ""
 echo "Installing dependencies (this may take 5-15 minutes, ~2-4GB download)..."
 "$SCRIPT_DIR/.venv/bin/pip" install --upgrade pip
 "$SCRIPT_DIR/.venv/bin/pip" install -r "$SCRIPT_DIR/requirements-standalone.txt"
+# Install neuracore last with --no-deps so its av==14 constraint doesn't
+# downgrade the av>=15 version that lerobot installed above.
+"$SCRIPT_DIR/.venv/bin/pip" install neuracore 
 
 chmod +x "$SCRIPT_DIR/run.sh"
 

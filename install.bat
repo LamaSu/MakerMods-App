@@ -31,10 +31,24 @@ if exist "%SCRIPT_DIR%.venv" (
   echo Virtual environment created at .venv
 )
 
+REM Install ffmpeg if not already present
+where ffmpeg >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+  echo ffmpeg already installed, skipping.
+) else (
+  echo Installing ffmpeg via winget...
+  winget install --id Gyan.FFmpeg -e --silent
+  if %ERRORLEVEL% NEQ 0 (
+    echo WARNING: winget install failed. Install ffmpeg manually: https://ffmpeg.org/download.html
+  )
+)
+
 echo.
 echo Installing dependencies (this may take 5-15 minutes, ~2-4GB download)...
 "%SCRIPT_DIR%.venv\Scripts\pip.exe" install --upgrade pip
 "%SCRIPT_DIR%.venv\Scripts\pip.exe" install -r "%SCRIPT_DIR%requirements-standalone.txt"
+REM Install neuracore last 
+"%SCRIPT_DIR%.venv\Scripts\pip.exe" install neuracore 
 
 echo.
 echo ==========================================

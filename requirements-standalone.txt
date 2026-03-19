@@ -17,4 +17,6 @@ huggingface_hub>=0.20.0
 lerobot
 
 # Cloud training integration
-neuracore
+# neuracore is installed separately because it's dependency clashes with lerobot 
+
+pin-pink # necessary for dataset import in neuracore

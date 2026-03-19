@@ -2,6 +2,22 @@
 
 ---
 
+## 2026-03-19 — Feature: FFmpeg auto-install in standalone installers
+
+`install.sh` and `install.bat` now check for `ffmpeg` on PATH and install it automatically before the pip dependency step.
+
+- **macOS**: uses `brew install ffmpeg`; prints a warning with the manual download URL if Homebrew is absent.
+- **Linux**: tries `apt-get install -y ffmpeg`, falls back to `dnf`, then falls back to a warning.
+- **Windows**: uses `winget install --id Gyan.FFmpeg -e --silent`; prints a warning if winget fails.
+
+In all cases the installer continues even if ffmpeg cannot be installed automatically, so pip deps still get set up.
+
+### Files Modified
+- `install.sh` — ffmpeg check-and-install block added after venv creation, before pip
+- `install.bat` — ffmpeg check-and-install block added after venv creation, before pip
+
+---
+
 ## 2026-03-19 — Fix: Job Status Case Normalization + Cross-Platform Folder Picker
 
 **Job status case mismatch**: Neuracore returns uppercase enum values (`"COMPLETED"`, `"FAILED"`, `"RUNNING"`) but the frontend was comparing against lowercase strings. The download button never appeared and completed jobs showed a grey badge. Fixed by normalizing with `.toLowerCase()` in `statusBadgeVariant()` and the download button condition. Also added `"preparing_data"` to the "secondary" (active) badge variant.
