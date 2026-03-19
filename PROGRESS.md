@@ -2,6 +2,35 @@
 
 ---
 
+## 2026-03-19 — Fix: Job Status Case Normalization + Cross-Platform Folder Picker
+
+**Job status case mismatch**: Neuracore returns uppercase enum values (`"COMPLETED"`, `"FAILED"`, `"RUNNING"`) but the frontend was comparing against lowercase strings. The download button never appeared and completed jobs showed a grey badge. Fixed by normalizing with `.toLowerCase()` in `statusBadgeVariant()` and the download button condition. Also added `"preparing_data"` to the "secondary" (active) badge variant.
+
+**Cross-platform folder picker**: Replaced the macOS-only `osascript` implementation with platform detection: `osascript` on macOS, PowerShell `FolderBrowserDialog` on Windows, and `zenity`/`kdialog` (with fallback) on Linux.
+
+### Files Modified
+- `frontend/components/wizard/steps/train-step.tsx` — `.toLowerCase()` in `statusBadgeVariant()` and download button condition
+- `backend/api/system.py` — `pick_folder()` now uses `sys.platform` to select the appropriate native dialog
+
+---
+
+## 2026-03-19 — Download Model Weights + Local Dataset Folder Picker
+
+Two UX improvements to the Train step:
+
+**Download model weights**: Completed training jobs now show a download icon button (↓). Clicking it calls `GET /api/neuracore/training/jobs/{job_id}/model-url` which hits the Neuracore internal `model_url` endpoint to fetch a signed GCS URL, then triggers a browser download of `model.nc.zip` (contains `model.pt`, `algorithm_config.json`, and source).
+
+**Folder picker for local path**: When the dataset source is "Local Path", a folder icon button appears next to the path input. Clicking it calls `POST /api/system/pick-folder` which runs `osascript -e 'POSIX path of (choose folder)'` to open a native macOS folder picker dialog and populates the path field.
+
+### Files Modified
+- `backend/services/neuracore_service.py` — added `get_model_download_url()`
+- `backend/api/neuracore_training.py` — added `GET /training/jobs/{job_id}/model-url`
+- `backend/api/system.py` — added `POST /pick-folder`
+- `frontend/lib/services.ts` — added `neuracoreGetModelDownloadUrl()`, `pickFolder()`
+- `frontend/components/wizard/steps/train-step.tsx` — download button on completed jobs, folder picker button on local path input
+
+---
+
 ## 2026-03-19 — Fix: Run each import in a subprocess to eliminate ZMQ socket leaks
 
 Root cause (deeper): neuracore `Producer` objects create a ZMQ PUSH socket per data stream per episode. `Producer.cleanup_producer()` updates recording state but **never closes the socket**. Over 5 episodes × 6 joints = 30+ unclosed ZMQ sockets per import. On re-import those sockets are still open; the new import tries to open another 6+, hits the OS fd limit (`Too many open files`), and the broken state cascades into DNS failures.

@@ -1,5 +1,8 @@
 """System status API endpoints."""
 
+import subprocess
+import sys
+
 from fastapi import APIRouter, HTTPException
 
 from backend.models.system import SystemStatus
@@ -35,3 +38,58 @@ async def get_system_status():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get system status: {e}")
+
+
+@router.post("/pick-folder")
+async def pick_folder():
+    """Open a native OS folder-picker dialog and return the selected path.
+
+    Uses AppleScript on macOS, PowerShell on Windows, zenity/kdialog on Linux.
+    Returns {"path": null} if the user cancels.
+    """
+    try:
+        path = None
+
+        if sys.platform == "darwin":
+            result = subprocess.run(
+                ["osascript", "-e", "POSIX path of (choose folder)"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            path = result.stdout.strip().rstrip("/") if result.returncode == 0 else None
+
+        elif sys.platform == "win32":
+            ps_script = (
+                "Add-Type -AssemblyName System.Windows.Forms;"
+                "$d = New-Object System.Windows.Forms.FolderBrowserDialog;"
+                "$d.ShowNewFolderButton = $false;"
+                "if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }"
+            )
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            path = result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else None
+
+        else:  # Linux
+            for cmd in [
+                ["zenity", "--file-selection", "--directory", "--title=Select Dataset Folder"],
+                ["kdialog", "--getexistingdirectory", "."],
+            ]:
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                    if result.returncode == 0 and result.stdout.strip():
+                        path = result.stdout.strip()
+                        break
+                except FileNotFoundError:
+                    continue
+
+        return {"path": path or None}
+
+    except subprocess.TimeoutExpired:
+        return {"path": None}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Folder picker failed: {e}")

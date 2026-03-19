@@ -211,6 +211,16 @@ async def get_training_job_logs(job_id: str, max_entries: int = 100):
         raise _http_error(500, f"Failed to get training logs: {exc}") from exc
 
 
+@router.get("/training/jobs/{job_id}/model-url")
+async def get_model_download_url(job_id: str):
+    """Return a signed download URL for the trained model archive of a completed job."""
+    try:
+        url = neuracore_service.get_model_download_url(job_id)
+        return {"url": url}
+    except Exception as exc:
+        raise _http_error(500, f"Failed to get model download URL: {exc}") from exc
+
+
 @router.delete("/training/jobs/{job_id}")
 async def delete_training_job(job_id: str):
     """Delete a training job and free its cloud resources."""

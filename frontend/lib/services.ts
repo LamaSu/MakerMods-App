@@ -416,6 +416,14 @@ export const services = {
     await fetchAPI(`/api/neuracore/training/jobs/${jobId}`, { method: "DELETE" });
   },
 
+  neuracoreGetModelDownloadUrl: async (jobId: string): Promise<{ url: string }> => {
+    return fetchAPI(`/api/neuracore/training/jobs/${jobId}/model-url`);
+  },
+
+  pickFolder: async (): Promise<{ path: string | null }> => {
+    return fetchAPI("/api/system/pick-folder", { method: "POST" });
+  },
+
   neuracoreListOrgs: async (): Promise<Array<{ id: string; name: string }>> => {
     return fetchAPI("/api/neuracore/orgs");
   },

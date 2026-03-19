@@ -569,6 +569,23 @@ class NeuracoreService:
 
         return nc.get_training_job_logs(job_id, max_entries=max_entries)
 
+    def get_model_download_url(self, job_id: str) -> str:
+        """Return a signed download URL for the trained model archive of a completed job."""
+        self._ensure_auth()
+        from neuracore.core.auth import get_auth
+        from neuracore.core.config.get_current_org import get_current_org
+        from neuracore.core.const import API_URL
+
+        auth = get_auth()
+        org_id = get_current_org()
+        resp = http_requests.get(
+            f"{API_URL}/org/{org_id}/training/jobs/{job_id}/model_url",
+            headers=auth.get_headers(),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()["url"]
+
     def delete_training_job(self, job_id: str) -> None:
         self._ensure_auth()
         import neuracore as nc

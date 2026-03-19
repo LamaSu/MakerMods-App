@@ -7,6 +7,8 @@ import {
   ChevronDown,
   ChevronRight,
   Cloud,
+  Download,
+  FolderOpen,
   Loader2,
   RefreshCw,
   Trash2,
@@ -65,9 +67,10 @@ const GPU_TYPES = [
 type JobStatus = "pending" | "queued" | "running" | "completed" | "failed" | string;
 
 function statusBadgeVariant(status: JobStatus): "default" | "secondary" | "destructive" | "outline" {
-  if (status === "completed") return "default";
-  if (status === "failed") return "destructive";
-  if (status === "running") return "secondary";
+  const s = status.toLowerCase();
+  if (s === "completed") return "default";
+  if (s === "failed") return "destructive";
+  if (s === "running" || s === "preparing_data") return "secondary";
   return "outline";
 }
 
@@ -177,6 +180,9 @@ export function TrainStep() {
   const [jobsLoading, setJobsLoading] = useState(false);
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const [jobLogs, setJobLogs] = useState<Record<string, string>>({});
+
+  const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
+  const [folderPickerLoading, setFolderPickerLoading] = useState(false);
 
   const importPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const jobsPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -533,6 +539,35 @@ export function TrainStep() {
       if (expandedJobId === jobId) setExpandedJobId(null);
     } catch {
       // ignore
+    }
+  };
+
+  const handleDownloadModel = async (jobId: string) => {
+    setDownloadingJobId(jobId);
+    try {
+      const { url } = await services.neuracoreGetModelDownloadUrl(jobId);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "model.nc.zip";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch {
+      // ignore — user sees no visual change
+    } finally {
+      setDownloadingJobId(null);
+    }
+  };
+
+  const handlePickFolder = async () => {
+    setFolderPickerLoading(true);
+    try {
+      const { path } = await services.pickFolder();
+      if (path) setLocalDatasetPath(path);
+    } catch {
+      // ignore
+    } finally {
+      setFolderPickerLoading(false);
     }
   };
 
@@ -926,11 +961,27 @@ export function TrainStep() {
                 ) : datasetSource === "local" ? (
                   <div className="space-y-1">
                     <Label>Local Dataset Path</Label>
-                    <Input
-                      value={localDatasetPath}
-                      onChange={(e) => setLocalDatasetPath(e.target.value)}
-                      placeholder="/path/to/dataset"
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        value={localDatasetPath}
+                        onChange={(e) => setLocalDatasetPath(e.target.value)}
+                        placeholder="/path/to/dataset"
+                        className="flex-1"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handlePickFolder}
+                        disabled={folderPickerLoading}
+                        title="Browse for folder"
+                      >
+                        {folderPickerLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <FolderOpen className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       Path to a local LeRobot dataset directory
                     </p>
@@ -1271,6 +1322,20 @@ export function TrainStep() {
                             <span className="text-xs text-muted-foreground">
                               {new Date(job.created_at).toLocaleDateString()}
                             </span>
+                          )}
+                          {job.status.toLowerCase() === "completed" && (
+                            <button
+                              className="text-muted-foreground hover:text-primary transition-colors"
+                              onClick={() => handleDownloadModel(job.id)}
+                              disabled={downloadingJobId === job.id}
+                              title="Download model weights"
+                            >
+                              {downloadingJobId === job.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Download className="h-3.5 w-3.5" />
+                              )}
+                            </button>
                           )}
                           <button
                             className="text-muted-foreground hover:text-destructive transition-colors"
