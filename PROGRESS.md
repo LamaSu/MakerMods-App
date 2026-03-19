@@ -2,6 +2,36 @@
 
 ---
 
+## 2026-03-19 — Fix: Run each import in a subprocess to eliminate ZMQ socket leaks
+
+Root cause (deeper): neuracore `Producer` objects create a ZMQ PUSH socket per data stream per episode. `Producer.cleanup_producer()` updates recording state but **never closes the socket**. Over 5 episodes × 6 joints = 30+ unclosed ZMQ sockets per import. On re-import those sockets are still open; the new import tries to open another 6+, hits the OS fd limit (`Too many open files`), and the broken state cascades into DNS failures.
+
+Fix: Moved all import logic into a module-level function `_nc_import_subprocess` and spawn it via `multiprocessing.get_context("spawn").Process`. Each import gets a fresh OS process; all ZMQ sockets, daemon IPC connections, and neuracore singleton state are guaranteed to be released when the subprocess exits. The background monitoring thread reads progress from a `multiprocessing.Queue` and updates the `_ImportTask`.
+
+### Files Modified
+- `backend/services/neuracore_service.py` (full rewrite of import flow)
+
+---
+
+## 2026-03-19 — Neuracore Dataset Source: Pick from Already-Imported Datasets
+
+Added a third dataset source option **Neuracore** to the Dataset Import section (section 4). When selected, a dropdown lets users pick a dataset already present in their Neuracore org instead of triggering a new import. Selecting a dataset auto-populates the Neuracore Dataset Name field. Import/Re-import buttons are hidden for this source.
+
+### Changes
+- **Frontend**: Added `"neuracore"` to `datasetSource` type union
+- **Frontend**: Added state: `neuracoreDatasets`, `neuracoreDatasetsLoading`, `selectedNeuracoreDatasetId`
+- **Frontend**: Added `loadNeuracoreDatasets()` function (calls `services.neuracoreListDatasets()`)
+- **Frontend**: Call `loadNeuracoreDatasets()` on mount (inside `if (res.authenticated)`) and in `handleSelectOrg`
+- **Frontend**: Updated `importDone` to be `true` when `datasetSource === "neuracore" && !!selectedNeuracoreDatasetId`
+- **Frontend**: Added Neuracore button to source toggle row
+- **Frontend**: Added Neuracore dataset picker panel (Select + refresh button) shown when source is `"neuracore"`
+- **Frontend**: Wrapped Import/Re-import buttons with `datasetSource !== "neuracore"` guard
+
+### Files Modified
+- `frontend/components/wizard/steps/train-step.tsx`
+
+---
+
 ## 2026-03-18 — Per-Episode Progress Bar for Neuracore Dataset Import
 
 Replaced `importer.import_all()` with a manual episode loop using `build_work_items()` + `prepare_worker()` + `import_item()`. This allows the backend to update `task.progress` and `task.message` after each episode, so the frontend progress bar advances continuously instead of staying stuck at 30% for the entire upload.

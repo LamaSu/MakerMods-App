@@ -7,14 +7,13 @@ HuggingFace LeRobot dataset import, and cloud training job management.
 from __future__ import annotations
 
 import logging
-import tempfile
+import multiprocessing as mp
 import threading
 import uuid
 from pathlib import Path
 from typing import Optional
 
 import requests as http_requests
-import yaml
 
 from backend.models.neuracore_training import (
     AlgorithmInfo,
@@ -39,6 +38,196 @@ SO101_DEFAULT_JOINT_NAMES = [
 ]
 
 
+# ── Subprocess worker (module-level so multiprocessing can pickle it) ──────────
+#
+# The neuracore SDK creates ZMQ PUSH sockets in Producer objects for each data
+# stream.  cleanup_producer() updates recording state but does NOT close the
+# socket; the socket accumulates across episodes and imports.  Running each
+# import in a fresh subprocess guarantees the OS reclaims all file descriptors
+# on exit, making re-imports safe.
+
+def _nc_import_subprocess(
+    queue: "mp.Queue[dict]",
+    api_key: str,
+    org_id: str,
+    request_dict: dict,
+) -> None:
+    """Execute a LeRobot→Neuracore import inside a clean subprocess.
+
+    Communicates progress back to the parent via *queue* using dicts with keys:
+      {"type": "progress", "value": float, "msg": str}
+      {"type": "done", "warnings": int}
+      {"type": "error", "msg": str}
+    """
+    import tempfile
+    import traceback
+    import yaml
+    from pathlib import Path as _Path
+
+    config_path: Optional[str] = None
+    try:
+        import neuracore as nc
+        from neuracore.core.data.dataset import Dataset
+        from neuracore.importer.lerobot_importer import LeRobotDatasetImporter
+        from neuracore_types.nc_data import DatasetImportConfig
+
+        def _put(progress: float, msg: str) -> None:
+            queue.put({"type": "progress", "value": progress, "msg": msg})
+
+        _put(0.05, "Authenticating with Neuracore…")
+        nc.login(api_key=api_key)
+        nc.set_organization(org_id)
+
+        dataset_name = request_dict["neuracore_dataset_name"]
+        _put(0.1, "Creating / resolving dataset…")
+        existing = Dataset.get_by_name(dataset_name, non_exist_ok=True)
+        if existing is None:
+            try:
+                nc.create_dataset(name=dataset_name)
+            except Exception as create_exc:
+                try:
+                    nc.get_dataset(name=dataset_name)
+                except Exception as get_exc:
+                    # List-scan fallback
+                    from neuracore.core.auth import get_auth
+                    from neuracore.core.config.get_current_org import get_current_org
+                    from neuracore.core.const import API_URL
+                    auth = get_auth()
+                    oid = get_current_org()
+                    resp = http_requests.get(
+                        f"{API_URL}/org/{oid}/datasets",
+                        headers=auth.get_headers(),
+                        timeout=15,
+                    )
+                    resp.raise_for_status()
+                    match = next(
+                        (d for d in resp.json() if d.get("name") == dataset_name),
+                        None,
+                    )
+                    if match is None:
+                        raise ValueError(
+                            f"Dataset '{dataset_name}' could not be created or found. "
+                            "Try a different dataset name."
+                        ) from get_exc
+                    nc.get_dataset(id=match["id"])
+        else:
+            nc.get_dataset(name=dataset_name)
+
+        _put(0.15, "Registering robot…")
+        nc.connect_robot(request_dict["robot_name"])
+
+        _put(0.2, "Building import configuration…")
+        dataset_source = request_dict.get("dataset_source", "huggingface")
+        local_path = request_dict.get("local_dataset_path")
+        hf_repo_id = request_dict.get("hf_repo_id", "")
+
+        if dataset_source == "local" and local_path:
+            dataset_dir = _Path(local_path)
+            input_dataset_name = dataset_dir.name
+            if not dataset_dir.exists():
+                raise ValueError(f"Local dataset path not found: {dataset_dir}")
+        else:
+            dataset_dir = _Path.home() / ".cache" / "huggingface" / "lerobot" / hf_repo_id
+            input_dataset_name = hf_repo_id
+            if not dataset_dir.exists():
+                _put(0.22, f"Downloading {hf_repo_id} from HuggingFace Hub…")
+                from huggingface_hub import snapshot_download
+                snapshot_download(
+                    repo_id=hf_repo_id,
+                    repo_type="dataset",
+                    local_dir=str(dataset_dir),
+                )
+
+        joint_names = request_dict.get("joint_names", [])
+        camera_names = request_dict.get("camera_names", [])
+        frequency = request_dict.get("frequency", 30)
+        joint_mapping = [{"name": n} for n in joint_names]
+        data_import: dict = {
+            "JOINT_POSITIONS": {
+                "source": "observation.state",
+                "units": "RADIANS",
+                "mapping": joint_mapping,
+            },
+            "JOINT_TARGET_POSITIONS": {
+                "source": "action",
+                "units": "RADIANS",
+                "mapping": joint_mapping,
+            },
+        }
+        if camera_names:
+            data_import["RGB_IMAGES"] = {
+                "source": "observation.images",
+                "format": {
+                    "image_convention": "CHANNELS_FIRST",
+                    "order_of_channels": "RGB",
+                    "normalized_pixel_values": True,
+                },
+                "mapping": [{"name": cam, "source_name": cam} for cam in camera_names],
+            }
+        yaml_config = {
+            "input_dataset_name": input_dataset_name,
+            "dataset_type": "LEROBOT",
+            "output_dataset": {"name": dataset_name},
+            "robot": {"name": request_dict["robot_name"]},
+            "frequency": frequency,
+            "data_import_config": data_import,
+        }
+
+        import tempfile as _tempfile
+        with _tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as fh:
+            yaml.dump(yaml_config, fh, default_flow_style=False)
+            config_path = fh.name
+
+        _put(0.25, f"Loading metadata from {dataset_dir}…")
+        dataconfig = DatasetImportConfig.from_file(config_path)
+
+        _put(0.3, "Preparing importer…")
+        importer = LeRobotDatasetImporter(
+            input_dataset_name=input_dataset_name,
+            output_dataset_name=dataset_name,
+            dataset_dir=dataset_dir,
+            dataset_config=dataconfig,
+        )
+        work_items = importer.build_work_items()
+        num_episodes = max(len(work_items), 1)
+        importer._worker_id = 0
+        importer.prepare_worker(0, work_items)
+
+        episode_errors = 0
+        for i, item in enumerate(work_items):
+            _put(0.3 + 0.65 * (i / num_episodes), f"Uploading episode {i + 1}/{num_episodes}…")
+            try:
+                importer.import_item(item)
+            except Exception:
+                episode_errors += 1
+
+        # Drain internal error queue
+        try:
+            q = getattr(importer, "_error_queue", None)
+            if q is not None:
+                while True:
+                    try:
+                        q.get_nowait()
+                        episode_errors += 1
+                    except Exception:
+                        break
+        except Exception:
+            pass
+
+        queue.put({"type": "done", "warnings": episode_errors})
+
+    except Exception as exc:
+        queue.put({"type": "error", "msg": str(exc), "tb": traceback.format_exc()})
+    finally:
+        if config_path:
+            try:
+                _Path(config_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+# ── Task tracking ──────────────────────────────────────────────────────────────
+
 class _ImportTask:
     """Mutable state for a background import thread."""
 
@@ -62,10 +251,7 @@ class NeuracoreService:
     # ──────────────────────────────── Auth ────────────────────────────────
 
     def generate_api_key(self, email: str, password: str) -> str:
-        """Authenticate with email/password and return a new API key.
-
-        Mirrors neuracore.core.cli.generate_api_key but without interactive prompts.
-        """
+        """Authenticate with email/password and return a new API key."""
         auth_resp = http_requests.post(
             f"{NEURACORE_API_URL}/auth/token",
             headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -88,7 +274,6 @@ class NeuracoreService:
 
         self._api_key = api_key
         self._nc_logged_in = False
-        # Persist into neuracore's own config so subsequent nc.login() calls work
         try:
             import neuracore as nc
             nc.login(api_key=api_key)
@@ -107,11 +292,9 @@ class NeuracoreService:
         self._nc_logged_in = True
 
     def is_authenticated(self) -> bool:
-        """Return True if an API key is stored in this session."""
         return self._api_key is not None
 
     def _ensure_auth(self) -> None:
-        """Ensure the SDK session is active. Login only if not already done."""
         if not self._api_key:
             raise ValueError("Not authenticated. Please provide Neuracore credentials first.")
         if not self._nc_logged_in:
@@ -122,7 +305,6 @@ class NeuracoreService:
     # ─────────────────────────── Organizations ────────────────────────────
 
     def list_orgs(self) -> list[dict]:
-        """Return all orgs the authenticated user belongs to."""
         self._ensure_auth()
         from neuracore.core.organizations import list_my_orgs
 
@@ -130,14 +312,12 @@ class NeuracoreService:
         return [{"id": o.id, "name": o.name} for o in orgs]
 
     def set_org(self, id_or_name: str) -> None:
-        """Set the active Neuracore organisation without any interactive prompt."""
         self._ensure_auth()
         import neuracore as nc
 
         nc.set_organization(id_or_name)
 
     def get_current_org_id(self) -> Optional[str]:
-        """Return the org_id stored in neuracore config, or None if not set."""
         try:
             from neuracore.core.config.config_manager import get_config_manager
 
@@ -148,10 +328,6 @@ class NeuracoreService:
     # ────────────────────────────── Robot ─────────────────────────────────
 
     def connect_robot(self, robot_name: str) -> dict:
-        """Register or retrieve a robot in Neuracore.
-
-        Returns a dict with robot_id and robot_name.
-        """
         self._ensure_auth()
         import neuracore as nc
 
@@ -159,7 +335,6 @@ class NeuracoreService:
         return {"robot_id": robot.id, "robot_name": robot.name}
 
     def list_robots(self) -> list[dict]:
-        """List all robots in the current organisation."""
         self._ensure_auth()
         from neuracore.core.robot import list_organization_robots
 
@@ -170,7 +345,6 @@ class NeuracoreService:
         return [{"id": r["id"], "name": r["name"]} for r in robots]
 
     def update_robot(self, robot_key: str, new_name: str) -> dict:
-        """Rename a robot by its current name or ID."""
         self._ensure_auth()
         import neuracore as nc
 
@@ -180,7 +354,6 @@ class NeuracoreService:
     # ─────────────────────────── Datasets ─────────────────────────────────
 
     def list_datasets(self) -> list[dict]:
-        """List Neuracore datasets for the current organisation."""
         self._ensure_auth()
         from neuracore.core.auth import get_auth
         from neuracore.core.config.get_current_org import get_current_org
@@ -199,10 +372,11 @@ class NeuracoreService:
     # ──────────────────────────── Import ──────────────────────────────────
 
     def start_import(self, request: ImportDatasetRequest) -> str:
-        """Kick off a background thread that imports an HF dataset into Neuracore.
+        """Kick off a subprocess that imports a LeRobot dataset into Neuracore.
 
         Returns the import_id for polling via get_import_status().
         """
+        org_id = self.get_current_org_id() or ""
         import_id = str(uuid.uuid4())
         task = _ImportTask(import_id)
         with self._lock:
@@ -210,7 +384,7 @@ class NeuracoreService:
 
         thread = threading.Thread(
             target=self._run_import,
-            args=(task, request),
+            args=(task, request, org_id),
             daemon=True,
             name=f"nc-import-{import_id[:8]}",
         )
@@ -218,7 +392,6 @@ class NeuracoreService:
         return import_id
 
     def get_import_status(self, import_id: str) -> ImportStatusResponse:
-        """Return the current status of an import task."""
         with self._lock:
             task = self._import_tasks.get(import_id)
         if task is None:
@@ -237,211 +410,96 @@ class NeuracoreService:
             error=task.error,
         )
 
-    def _run_import(self, task: _ImportTask, request: ImportDatasetRequest) -> None:
-        """Execute the LeRobot → Neuracore import in a background thread."""
-        config_path: Optional[Path] = None
+    def _run_import(
+        self, task: _ImportTask, request: ImportDatasetRequest, org_id: str
+    ) -> None:
+        """Spawn a subprocess for the import so every run gets a clean OS process.
+
+        The neuracore SDK leaks ZMQ PUSH sockets (one per data type per episode)
+        because Producer.cleanup_producer() updates recording state but does not
+        close the socket.  A subprocess guarantees the OS reclaims all FDs on exit,
+        making re-imports safe without patching the SDK.
+        """
+        task.status = "running"
+        task.message = "Starting import subprocess…"
+
+        ctx = mp.get_context("spawn")
+        queue: mp.Queue = ctx.Queue()
+        proc = ctx.Process(
+            target=_nc_import_subprocess,
+            args=(queue, self._api_key, org_id, request.model_dump()),
+            daemon=False,
+            name="nc-import-proc",
+        )
+        proc.start()
+
         try:
-            import neuracore as nc
-            from neuracore.core.data.dataset import Dataset  # needed for get_by_name
-            # Bypass importer.py — it unconditionally imports tensorflow via rlds_tfds_importer
-            from neuracore.importer.lerobot_importer import LeRobotDatasetImporter
-            from neuracore_types.nc_data import DatasetImportConfig
-
-            task.status = "running"
-            task.message = "Authenticating with Neuracore…"
-            nc.login(api_key=self._api_key)  # background thread needs its own login
-
-            task.message = "Creating / resolving dataset…"
-            task.progress = 0.1
-            existing = Dataset.get_by_name(request.neuracore_dataset_name, non_exist_ok=True)
-            if existing is None:
+            while proc.is_alive():
                 try:
-                    nc.create_dataset(name=request.neuracore_dataset_name)
-                except Exception as create_exc:
-                    # Name may already exist globally (in another org); try retrieving it
-                    logger.warning(
-                        "create_dataset failed (%s); trying to use existing dataset",
-                        create_exc,
+                    msg = queue.get(timeout=2.0)
+                except Exception:
+                    continue
+
+                if msg["type"] == "progress":
+                    task.progress = msg["value"]
+                    task.message = msg["msg"]
+                elif msg["type"] == "done":
+                    w = msg.get("warnings", 0)
+                    task.status = "completed"
+                    task.progress = 1.0
+                    task.message = (
+                        f"Import completed with {w} warning(s)." if w
+                        else "Import completed successfully!"
                     )
-                    try:
-                        nc.get_dataset(name=request.neuracore_dataset_name)
-                    except Exception as get_exc:
-                        # Name lookup also failed — last resort: list all datasets and match by
-                        # name, then activate by ID (different API endpoint, bypasses name-lookup bug)
-                        logger.warning(
-                            "get_dataset(name=...) failed (%s); scanning dataset list for name match",
-                            get_exc,
-                        )
-                        datasets = self.list_datasets()
-                        match = next(
-                            (d for d in datasets if d.get("name") == request.neuracore_dataset_name),
-                            None,
-                        )
-                        if match is None:
-                            raise ValueError(
-                                f"Dataset '{request.neuracore_dataset_name}' could not be created or found. "
-                                "The name may be reserved or tombstoned on Neuracore. "
-                                "Try a different dataset name."
-                            ) from get_exc
-                        logger.info(
-                            "Found dataset '%s' by list scan (id=%s); activating by ID",
-                            request.neuracore_dataset_name,
-                            match["id"],
-                        )
-                        nc.get_dataset(id=match["id"])
-            else:
-                logger.info(
-                    "Dataset '%s' already exists; new episodes will be appended.",
-                    request.neuracore_dataset_name,
-                )
-                # Set active dataset so start_recording() uses the right dataset
-                nc.get_dataset(name=request.neuracore_dataset_name)
+                    break
+                elif msg["type"] == "error":
+                    task.status = "failed"
+                    task.error = msg["msg"]
+                    task.message = f"Import failed: {msg['msg']}"
+                    logger.error("Import subprocess error:\n%s", msg.get("tb", ""))
+                    break
 
-            task.message = "Registering robot…"
-            task.progress = 0.15
-            nc.connect_robot(request.robot_name)
-
-            task.message = "Building import configuration…"
-            task.progress = 0.2
-
-            if request.dataset_source == "local" and request.local_dataset_path:
-                dataset_dir = Path(request.local_dataset_path)
-                input_dataset_name = dataset_dir.name
-                if not dataset_dir.exists():
-                    raise ValueError(f"Local dataset path not found: {dataset_dir}")
-            else:
-                # HuggingFace — use cache, or download if missing
-                dataset_dir = (
-                    Path.home() / ".cache" / "huggingface" / "lerobot" / request.hf_repo_id
-                )
-                input_dataset_name = request.hf_repo_id
-                if not dataset_dir.exists():
-                    task.message = f"Downloading {request.hf_repo_id} from HuggingFace Hub…"
-                    task.progress = 0.22
-                    from huggingface_hub import snapshot_download
-                    snapshot_download(
-                        repo_id=request.hf_repo_id,
-                        repo_type="dataset",
-                        local_dir=str(dataset_dir),
-                    )
-
-            yaml_config = self._build_yaml_config(request, input_dataset_name=input_dataset_name)
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".yaml", delete=False
-            ) as fh:
-                yaml.dump(yaml_config, fh, default_flow_style=False)
-                config_path = Path(fh.name)
-
-            task.message = f"Loading metadata from {dataset_dir}…"
-            task.progress = 0.25
-
-            dataconfig = DatasetImportConfig.from_file(config_path)
-
-            task.message = "Preparing importer…"
-            task.progress = 0.3
-
-            importer = LeRobotDatasetImporter(
-                input_dataset_name=input_dataset_name,
-                output_dataset_name=request.neuracore_dataset_name,
-                dataset_dir=dataset_dir,
-                dataset_config=dataconfig,
-            )
-
-            # Use the low-level API (build_work_items → prepare_worker → import_item)
-            # instead of import_all() so we can report per-episode progress.
-            work_items = importer.build_work_items()
-            num_episodes = max(len(work_items), 1)
-            # Mirror what _worker_entry does before calling prepare_worker:
-            # set _worker_id so nc.start_recording(instance=...) uses instance 0.
-            importer._worker_id = 0
-            importer.prepare_worker(0, work_items)
-
-            episode_errors = 0
-            for i, item in enumerate(work_items):
-                task.progress = 0.3 + 0.65 * (i / num_episodes)
-                task.message = f"Uploading episode {i + 1}/{num_episodes}…"
+            # Drain any remaining messages after subprocess exits
+            while True:
                 try:
-                    importer.import_item(item)
-                except Exception as ep_exc:
-                    logger.warning("Episode %d import failed: %s", i, ep_exc)
-                    episode_errors += 1
-
-            # Drain any errors queued via the internal _error_queue
-            try:
-                q = getattr(importer, "_error_queue", None)
-                if q is not None:
-                    while True:
-                        try:
-                            q.get_nowait()
-                            episode_errors += 1
-                        except Exception:
-                            break
-            except Exception:
-                pass
-
-            worker_err_count = episode_errors
-            task.status = "completed"
-            task.progress = 1.0
-            task.message = (
-                f"Import completed with {worker_err_count} warning(s) (server-side cleanup errors are normal)."
-                if worker_err_count
-                else "Import completed successfully!"
-            )
+                    msg = queue.get_nowait()
+                    if msg["type"] == "progress":
+                        task.progress = msg["value"]
+                        task.message = msg["msg"]
+                    elif msg["type"] == "done":
+                        w = msg.get("warnings", 0)
+                        task.status = "completed"
+                        task.progress = 1.0
+                        task.message = (
+                            f"Import completed with {w} warning(s)." if w
+                            else "Import completed successfully!"
+                        )
+                    elif msg["type"] == "error":
+                        task.status = "failed"
+                        task.error = msg["msg"]
+                        task.message = f"Import failed: {msg['msg']}"
+                except Exception:
+                    break
 
         except Exception as exc:
-            logger.exception("Neuracore import failed")
             task.status = "failed"
             task.error = str(exc)
-            task.message = f"Import failed: {exc}"
+            task.message = f"Import monitor error: {exc}"
         finally:
-            if config_path and config_path.exists():
-                config_path.unlink(missing_ok=True)
+            proc.join(timeout=10)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=5)
 
-    @staticmethod
-    def _build_yaml_config(request: ImportDatasetRequest, input_dataset_name: str | None = None) -> dict:
-        """Construct the DatasetImportConfig YAML dict for an SO101 LeRobot dataset."""
-        name = input_dataset_name or request.hf_repo_id
-        joint_mapping = [{"name": n} for n in request.joint_names]
-
-        data_import: dict = {
-            "JOINT_POSITIONS": {
-                "source": "observation.state",
-                "units": "RADIANS",
-                "mapping": joint_mapping,
-            },
-            "JOINT_TARGET_POSITIONS": {
-                "source": "action",
-                "units": "RADIANS",
-                "mapping": joint_mapping,
-            },
-        }
-
-        if request.camera_names:
-            data_import["RGB_IMAGES"] = {
-                "source": "observation.images",
-                "format": {
-                    "image_convention": "CHANNELS_FIRST",
-                    "order_of_channels": "RGB",
-                    "normalized_pixel_values": True,
-                },
-                "mapping": [
-                    {"name": cam, "source_name": cam} for cam in request.camera_names
-                ],
-            }
-
-        return {
-            "input_dataset_name": name,
-            "dataset_type": "LEROBOT",
-            "output_dataset": {"name": request.neuracore_dataset_name},
-            "robot": {"name": request.robot_name},
-            "frequency": request.frequency,
-            "data_import_config": data_import,
-        }
+        # If process died without sending a terminal message, mark as failed
+        if task.status == "running":
+            task.status = "failed"
+            task.error = f"Import subprocess exited unexpectedly (code {proc.exitcode})"
+            task.message = task.error
 
     # ──────────────────────────── Training ────────────────────────────────
 
     def get_algorithms(self) -> list[AlgorithmInfo]:
-        """Fetch available training algorithms from Neuracore."""
         self._ensure_auth()
         from neuracore.api.training import _get_algorithms
 
@@ -456,11 +514,6 @@ class NeuracoreService:
         ]
 
     def start_training(self, request: StartTrainingRequest) -> dict:
-        """Submit a cloud training job to Neuracore.
-
-        Resolves the robot_id from the dataset, then builds the input/output
-        data specs before calling nc.start_training_run().
-        """
         self._ensure_auth()
         import neuracore as nc
 
@@ -499,28 +552,24 @@ class NeuracoreService:
         return job_data
 
     def get_training_jobs(self) -> list[dict]:
-        """List all training jobs for the current organisation."""
         self._ensure_auth()
         import neuracore as nc
 
         return nc.get_training_jobs()
 
     def get_training_job_status(self, job_id: str) -> str:
-        """Get the status string for a training job."""
         self._ensure_auth()
         import neuracore as nc
 
         return nc.get_training_job_status(job_id)
 
     def get_training_job_logs(self, job_id: str, max_entries: int = 100) -> dict:
-        """Fetch cloud logs for a training job."""
         self._ensure_auth()
         import neuracore as nc
 
         return nc.get_training_job_logs(job_id, max_entries=max_entries)
 
     def delete_training_job(self, job_id: str) -> None:
-        """Delete a training job and free cloud resources."""
         self._ensure_auth()
         import neuracore as nc
 

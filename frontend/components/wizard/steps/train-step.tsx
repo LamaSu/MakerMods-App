@@ -133,7 +133,10 @@ export function TrainStep() {
   const [editError, setEditError] = useState<string | null>(null);
 
   // Import state
-  const [datasetSource, setDatasetSource] = useState<"huggingface" | "local">("huggingface");
+  const [datasetSource, setDatasetSource] = useState<"huggingface" | "local" | "neuracore">("huggingface");
+  const [neuracoreDatasets, setNeuracoreDatasets] = useState<Array<{ id: string; name: string }>>([]);
+  const [neuracoreDatasetsLoading, setNeuracoreDatasetsLoading] = useState(false);
+  const [selectedNeuracoreDatasetId, setSelectedNeuracoreDatasetId] = useState("");
   const [localDatasetPath, setLocalDatasetPath] = useState("");
   const [hfRepoId, setHfRepoId] = useState(
     nc.importedDatasetName ? "" : (state.recordingConfig.repoId || "")
@@ -199,6 +202,7 @@ export function TrainStep() {
         fetchJobs();
         fetchAlgorithms();
         loadRobots();
+        loadNeuracoreDatasets();
       }
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -288,6 +292,18 @@ export function TrainStep() {
     }
   };
 
+  const loadNeuracoreDatasets = async () => {
+    setNeuracoreDatasetsLoading(true);
+    try {
+      const list = await services.neuracoreListDatasets();
+      setNeuracoreDatasets(list);
+    } catch {
+      // non-fatal
+    } finally {
+      setNeuracoreDatasetsLoading(false);
+    }
+  };
+
   const handleSelectOrg = async (orgId: string, orgList?: Array<{ id: string; name: string }>) => {
     setOrgLoading(true);
     setOrgError(null);
@@ -302,6 +318,7 @@ export function TrainStep() {
       fetchJobs();
       fetchAlgorithms();
       loadRobots();
+      loadNeuracoreDatasets();
     } catch (e: unknown) {
       setOrgError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -404,7 +421,7 @@ export function TrainStep() {
         jointNames,
         cameraNames: configuredCameraNames,
         frequency: importFrequency,
-        datasetSource,
+        datasetSource: datasetSource as "huggingface" | "local",
         localDatasetPath: datasetSource === "local" ? localDatasetPath : undefined,
       });
       setImportId(res.import_id);
@@ -520,7 +537,10 @@ export function TrainStep() {
   };
 
   // ── Computed state ─────────────────────────────────────────────────────────
-  const importDone = importStatus?.status === "completed" || !!nc.importedDatasetName;
+  const importDone =
+    (datasetSource === "neuracore" && !!selectedNeuracoreDatasetId) ||
+    importStatus?.status === "completed" ||
+    !!nc.importedDatasetName;
   const importRunning = importing || (importStatus?.status === "running");
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -880,6 +900,13 @@ export function TrainStep() {
                   >
                     Local Path
                   </Button>
+                  <Button
+                    variant={datasetSource === "neuracore" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setDatasetSource("neuracore")}
+                  >
+                    Neuracore
+                  </Button>
                 </div>
               </div>
 
@@ -896,7 +923,7 @@ export function TrainStep() {
                       Will download from Hub if not cached locally
                     </p>
                   </div>
-                ) : (
+                ) : datasetSource === "local" ? (
                   <div className="space-y-1">
                     <Label>Local Dataset Path</Label>
                     <Input
@@ -906,6 +933,42 @@ export function TrainStep() {
                     />
                     <p className="text-xs text-muted-foreground">
                       Path to a local LeRobot dataset directory
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <Label>Neuracore Dataset</Label>
+                    <div className="flex gap-2">
+                      <Select
+                        value={selectedNeuracoreDatasetId}
+                        onValueChange={(v) => {
+                          setSelectedNeuracoreDatasetId(v);
+                          const ds = neuracoreDatasets.find((d) => d.id === v);
+                          if (ds) setNeuracoreDatasetName(ds.name);
+                        }}
+                        disabled={neuracoreDatasetsLoading}
+                      >
+                        <SelectTrigger className="flex-1">
+                          <SelectValue placeholder="Choose an existing dataset…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {neuracoreDatasets.map((d) => (
+                            <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={loadNeuracoreDatasets}
+                        disabled={neuracoreDatasetsLoading}
+                        title="Refresh dataset list"
+                      >
+                        <RefreshCw className={`h-4 w-4 ${neuracoreDatasetsLoading ? "animate-spin" : ""}`} />
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Dataset already imported into Neuracore — no upload needed.
                     </p>
                   </div>
                 )}
@@ -1003,7 +1066,7 @@ export function TrainStep() {
                 </div>
               )}
 
-              {!importDone && (
+              {!importDone && datasetSource !== "neuracore" && (
                 <Button
                   onClick={handleImport}
                   disabled={importRunning || !neuracoreDatasetName || (datasetSource === "huggingface" ? !hfRepoId : !localDatasetPath)}
@@ -1017,7 +1080,7 @@ export function TrainStep() {
                 </Button>
               )}
 
-              {importDone && (
+              {importDone && datasetSource !== "neuracore" && (
                 <Button
                   variant="outline"
                   onClick={handleImport}
