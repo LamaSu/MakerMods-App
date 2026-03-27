@@ -6,6 +6,7 @@ export interface PortInfo {
   port: string;
   description: string | null;
   hwid: string | null;
+  accessible?: boolean;
 }
 
 // Camera info from backend OpenCV detection (ground truth indices)

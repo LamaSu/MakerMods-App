@@ -1,5 +1,6 @@
 """Port scanning service wrapping lerobot_find_port logic."""
 
+import os
 import platform
 from pathlib import Path
 from typing import List
@@ -43,6 +44,7 @@ class PortScannerService:
                 port=port,
                 description="Feetech Motor Controller",
                 hwid=None,
+                accessible=os.access(port, os.R_OK | os.W_OK),
             )
             for port in ports
         ]

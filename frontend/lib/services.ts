@@ -244,6 +244,20 @@ export const services = {
     });
   },
 
+  fixPortPermission: async (port: string): Promise<{ success: boolean; message: string }> => {
+    return fetchAPI("/api/system/fix-port-permission", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ port }),
+    });
+  },
+
+  fixPortPermissionsPermanent: async (): Promise<{ success: boolean; message: string }> => {
+    return fetchAPI("/api/system/fix-port-permissions-permanent", {
+      method: "POST",
+    });
+  },
+
   stopCameraStreams: async (): Promise<void> => {
     if (USE_MOCK) return;
     await fetchAPI("/api/setup/cameras/streams/stop", { method: "POST" });

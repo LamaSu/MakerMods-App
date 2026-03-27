@@ -11,6 +11,7 @@ class PortInfo(BaseModel):
     port: str = Field(..., description="Port path (e.g., '/dev/tty.usbmodem...')")
     description: Optional[str] = Field(None, description="Port description")
     hwid: Optional[str] = Field(None, description="Hardware ID")
+    accessible: bool = Field(True, description="Whether the port is readable/writable")
 
 
 class CameraInfo(BaseModel):

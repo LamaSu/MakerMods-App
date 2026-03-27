@@ -37,7 +37,7 @@ def _get_error_hint(e: Exception) -> Optional[str]:
     if "no status packet" in msg or "txrxresult" in msg:
         return "This error usually means the arm is not powered on. Make sure the motor power supply is connected and switched on, then try again."
     if "could not open port" in msg or "serialexception" in msg or "permission denied" in msg:
-        return "Port unavailable — it may already be in use by another process."
+        return "Port unavailable — it may already be in use by another process, or you may not have permission. Click 'Fix Permissions' to resolve."
     return None
 
 
@@ -61,7 +61,7 @@ async def list_cameras(exclude_builtin: bool = False):
         # Stop any active MJPEG streams first — the scan opens cv2.VideoCapture
         # for each index, which conflicts with streams in the same process.
         await asyncio.to_thread(_stop_all_streams)
-        return await asyncio.to_thread(camera_scanner.list_cameras, exclude_builtin)
+        return await asyncio.to_thread(camera_scanner.list_cameras, exclude_builtin=exclude_builtin)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list cameras: {e}")
 
@@ -102,6 +102,10 @@ def _wiggle_gripper_sync(port: str) -> None:
 
     from lerobot.motors import Motor, MotorNormMode
     from lerobot.motors.feetech import FeetechMotorsBus
+
+    from backend.services.port_permissions import ensure_port_accessible
+
+    ensure_port_accessible(port)
 
     bus = FeetechMotorsBus(
         port=port,
@@ -161,6 +165,15 @@ async def wiggle_gripper(request: WiggleRequest):
             detail={
                 "message": "Wiggle gripper timed out after 15 seconds",
                 "hint": "The arm may not be powered on or responding.",
+            },
+        )
+    except PermissionError as e:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "message": str(e),
+                "hint": "Click 'Fix Permissions' to grant access to this port, or run: sudo chmod 666 <port>",
+                "permission_error": True,
             },
         )
     except Exception as e:

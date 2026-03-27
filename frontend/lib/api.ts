@@ -73,6 +73,7 @@ interface PortInfo {
   port: string;
   description: string | null;
   hwid: string | null;
+  accessible?: boolean;
 }
 
 interface CameraInfo {
