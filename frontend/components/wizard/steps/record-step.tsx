@@ -37,6 +37,7 @@ import {
 } from "@/components/common/robot-display";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { services } from "@/lib/services";
+import { usePlatform } from "@/hooks/use-platform";
 import { useWizard } from "../wizard-provider";
 import { StepCard } from "../step-card";
 
@@ -219,6 +220,8 @@ export function RecordStep() {
   const [hfChecking, setHfChecking] = useState(true);
   const priorComplete = allPriorStepsComplete(5);
   const isRunning = state.recordProcessId !== null;
+  const platform = usePlatform();
+  const canStreamDuringProcess = platform === "darwin";
 
   const { logs, isConnected, clearLogs } = useWebSocket(state.recordProcessId);
 
@@ -636,7 +639,7 @@ export function RecordStep() {
         {/* Live camera + motor feeds (only when displayData is enabled) */}
         {isRunning && config.displayData && (
           <div className="space-y-3">
-            {selectedCameraFeeds.length > 0 && (
+            {canStreamDuringProcess && selectedCameraFeeds.length > 0 && (
               <CameraFeedPanel cameras={selectedCameraFeeds} />
             )}
             <MotorPanel

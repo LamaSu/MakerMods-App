@@ -10,6 +10,7 @@ from backend.models.system import ProcessStatus
 from backend.services.config_manager import ConfigManager
 from backend.services.port_lock_manager import PortInUseError, port_lock_manager
 from backend.services.process_manager import process_manager
+from backend.api.setup import _stop_all_streams
 
 router = APIRouter()
 config_manager = ConfigManager()
@@ -87,6 +88,9 @@ async def start_inference(request: InferenceRequest):
     """Start policy inference (autonomous robot control)."""
     ports = []
     try:
+        # Stop any active MJPEG camera streams so the subprocess can access cameras
+        await asyncio.to_thread(_stop_all_streams)
+
         config = config_manager.load_config()
 
         # Validate config - only need robot ports and cameras (no teleop needed)

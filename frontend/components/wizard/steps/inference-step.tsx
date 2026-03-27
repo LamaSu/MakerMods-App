@@ -36,6 +36,7 @@ import {
 import { useWebSocket } from "@/hooks/use-websocket";
 import { services } from "@/lib/services";
 import { INFERENCE_MODELS } from "@/lib/wizard-types";
+import { usePlatform } from "@/hooks/use-platform";
 import { useWizard } from "../wizard-provider";
 import { StepCard } from "../step-card";
 
@@ -93,6 +94,8 @@ export function InferenceStep() {
     state.completedSteps[2] &&
     state.completedSteps[3];
   const isRunning = state.inferenceProcessId !== null;
+  const platform = usePlatform();
+  const canStreamDuringProcess = platform === "darwin";
 
   const { logs, isConnected, clearLogs } = useWebSocket(
     state.inferenceProcessId
@@ -529,7 +532,7 @@ export function InferenceStep() {
         {/* Live camera + motor feeds */}
         {isRunning && config.displayData && (
           <div className="space-y-3">
-            {selectedCameraFeeds.length > 0 && (
+            {canStreamDuringProcess && selectedCameraFeeds.length > 0 && (
               <CameraFeedPanel cameras={selectedCameraFeeds} />
             )}
             <MotorPanel

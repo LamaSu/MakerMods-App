@@ -21,6 +21,7 @@ import { useMotorState, MotorPanel, CameraFeedPanel } from "@/components/common/
 import { useWebSocket } from "@/hooks/use-websocket";
 import { services } from "@/lib/services";
 import { validateBimanualCalibrationNames } from "@/lib/wizard-types";
+import { usePlatform } from "@/hooks/use-platform";
 import { useWizard } from "../wizard-provider";
 import { StepCard } from "../step-card";
 import { BaseControlPanel } from "./base-control-panel";
@@ -37,6 +38,9 @@ export function TeleoperateStep() {
   const [showCameras, setShowCameras] = useState(false);
   const [baseConnected, setBaseConnected] = useState(false);
   const priorComplete = allPriorStepsComplete(4);
+  const platform = usePlatform();
+  const canStreamDuringProcess = platform === "darwin";
+  const isTeleRunning = teleState === "running";
 
   const selectedCameraFeeds = state.cameraSelections
     .filter((c) => c.included && c.name)
@@ -196,7 +200,9 @@ export function TeleoperateStep() {
           </Label>
         </div>
 
-        {showCameras && <CameraFeedPanel cameras={selectedCameraFeeds} />}
+        {showCameras && (!isTeleRunning || canStreamDuringProcess) && (
+          <CameraFeedPanel cameras={selectedCameraFeeds} />
+        )}
 
         <Separator />
 

@@ -42,7 +42,13 @@ app.mount("/outputs", StaticFiles(directory=str(outputs_dir)), name="outputs")
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "message": "LeRobot Web UI is running"}
+    import platform as _platform
+
+    return {
+        "status": "healthy",
+        "message": "LeRobot Web UI is running",
+        "platform": _platform.system().lower(),
+    }
 
 
 # Startup and shutdown events
