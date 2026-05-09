@@ -83,8 +83,8 @@ Use the **same** environment where lerobot is installed (e.g. conda `lerobot`).
 # Activate your lerobot environment
 conda activate lerobot   # or: source /path/to/venv/bin/activate
 
-# From the MakerMods-LeRobot-UI repo root
-cd /path/to/MakerMods-LeRobot-UI
+# From the MakerMods-App repo root
+cd /path/to/MakerMods-App
 pip install -r requirements.txt
 ```
 
@@ -105,7 +105,7 @@ If you already have lerobot installed, some of these may be present; installing 
 From the repo root:
 
 ```bash
-cd /path/to/MakerMods-LeRobot-UI/frontend
+cd /path/to/MakerMods-App/frontend
 npm install
 ```
 
@@ -121,14 +121,14 @@ Use two terminals.
 
 ```bash
 conda activate lerobot
-cd /path/to/MakerMods-LeRobot-UI
+cd /path/to/MakerMods-App
 python -m backend.main
 ```
 
 **Terminal 2 — Frontend (port 3000)**
 
 ```bash
-cd /path/to/MakerMods-LeRobot-UI/frontend
+cd /path/to/MakerMods-App/frontend
 npm run dev
 ```
 
